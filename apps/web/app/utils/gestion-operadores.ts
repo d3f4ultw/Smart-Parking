@@ -3,6 +3,14 @@ export type EstadoCuentaOperador =
   | 'acceso_habilitado'
   | 'inactivo'
 
+export interface CreadorOperador {
+  id: number
+  nombre: string | null
+  apellido_paterno: string | null
+  apellido_materno: string | null
+  correo: string
+}
+
 export interface Operador {
   id: number
   nombre: string
@@ -10,7 +18,14 @@ export interface Operador {
   apellido_materno: string
   correo: string
   esta_activo: boolean
+  creado_en: string
+  creado_por: CreadorOperador | null
   estado_cuenta: EstadoCuentaOperador
+}
+
+export interface DetalleOperadorConCooldown {
+  operador: Operador
+  cooldown_reenvio_segundos: number
 }
 
 export interface RespuestaListaOperadores {
@@ -19,6 +34,35 @@ export interface RespuestaListaOperadores {
   tamano_pagina: number
   total: number
   total_paginas: number
+  cursor_eventos: string
+}
+
+const FORMATO_FECHA_CREACION = new Intl.DateTimeFormat('es-MX', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'America/Mexico_City',
+})
+
+export function etiquetaCreadorOperador(
+  creador: CreadorOperador | null,
+): string {
+  if (creador === null) {
+    return '—'
+  }
+
+  const nombre = [
+    creador.nombre,
+    creador.apellido_paterno,
+    creador.apellido_materno,
+  ].filter(Boolean).join(' ')
+  return nombre || creador.correo
+}
+
+export function formatearCreacionOperador(valor: string): string {
+  const fecha = new Date(valor)
+  return Number.isNaN(fecha.getTime())
+    ? '—'
+    : FORMATO_FECHA_CREACION.format(fecha)
 }
 
 export interface RespuestaAccionOperador {
@@ -73,6 +117,17 @@ export function puedeRegenerarContrasenaOperador(
   operador: Pick<Operador, 'esta_activo' | 'estado_cuenta'>,
 ): boolean {
   return operador.esta_activo && operador.estado_cuenta === 'acceso_habilitado'
+}
+
+export function obtenerSegundosRetryAfter(valor: string | null): number | null {
+  if (valor === null || !/^\d+$/.test(valor)) {
+    return null
+  }
+
+  const segundos = Number(valor)
+  return Number.isSafeInteger(segundos) && segundos > 0 && segundos <= 86_400
+    ? segundos
+    : null
 }
 
 export function mapearErrorGestionOperador(status: number | undefined): string {

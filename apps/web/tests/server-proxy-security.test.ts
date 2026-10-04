@@ -14,6 +14,8 @@ type UpstreamPlan = {
   status: number
   body?: string
   headers?: Record<string, string | string[]>
+  stream?: boolean
+  onClose?: () => void
 }
 
 type CapturedRequest = {
@@ -21,6 +23,8 @@ type CapturedRequest = {
   path: string
   query: string
   cookie?: string
+  accept?: string
+  lastEventId?: string
   contentType?: string
   role?: string
   roleAlias?: string
@@ -107,6 +111,8 @@ function captureRequest(request: IncomingMessage, body: string): CapturedRequest
     path: url.pathname,
     query: url.search,
     cookie: headerValue(request.headers.cookie),
+    accept: headerValue(request.headers.accept),
+    lastEventId: headerValue(request.headers['last-event-id']),
     contentType: headerValue(request.headers['content-type']),
     role: headerValue(request.headers['x-user-role']),
     roleAlias: headerValue(request.headers['x-role']),
@@ -216,6 +222,13 @@ async function startHarness(): Promise<Harness> {
         requests.push(captureRequest(request, body))
         const plan = plans.shift() ?? jsonPlan(200, { estado: 'fixture' })
         response.writeHead(plan.status, plan.headers ?? {})
+        if (plan.stream) {
+          if (plan.onClose) {
+            response.once('close', plan.onClose)
+          }
+          response.write(plan.body ?? '')
+          return
+        }
         response.end(plan.status === 204 ? '' : plan.body ?? '')
       })
     })
@@ -665,6 +678,85 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         )
       }
       harness.clearRequests()
+    })
+
+    await suite.test('operator SSE forwards its private stream and cancels upstream', async () => {
+      const cookie = `smart_parking_session=${marker()}`
+      const payload = 'id: 41\nevent: operador.actualizado\ndata: {"operador_id":9}\n\n'
+      let cerrarUpstream!: () => void
+      const upstreamCerrado = new Promise<void>((resolve) => {
+        cerrarUpstream = resolve
+      })
+      harness.queueResponse({
+        status: 200,
+        body: payload,
+        stream: true,
+        headers: {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+        },
+        onClose: cerrarUpstream,
+      })
+
+      const respuesta = await fetch(
+        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=41&rol=ADMIN`,
+        { headers: { cookie } },
+      )
+      assert.equal(respuesta.status, 200, 'SSE response status is preserved')
+      assert.equal(respuesta.headers.get('content-type')?.startsWith('text/event-stream'), true)
+      assert.equal(respuesta.headers.get('cache-control'), 'no-store')
+      assert.equal(respuesta.headers.get('x-accel-buffering'), 'no')
+      const lector = respuesta.body?.getReader()
+      assert.ok(lector, 'SSE body is readable as a stream')
+      const primerBloque = await lector.read()
+      assert.equal(primerBloque.done, false, 'Upstream remains open while client reads')
+      assert.ok(
+        new TextDecoder().decode(primerBloque.value).includes('operador.actualizado'),
+        'SSE event arrives before the upstream response ends',
+      )
+      const solicitud = harness.requests[0]
+      assert.ok(solicitud, 'SSE request reached the private upstream')
+      assert.equal(solicitud.path, '/api/admin/operadores/eventos')
+      assert.equal(solicitud.query, '', 'SSE query parameters are not forwarded')
+      assert.equal(solicitud.cookie, cookie, 'Authenticated cookie is forwarded')
+      assert.equal(solicitud.accept, 'text/event-stream', 'Event stream Accept is explicit')
+      assert.equal(solicitud.lastEventId, '41', 'Initial cursor becomes Last-Event-ID')
+
+      await lector.cancel()
+      await Promise.race([
+        upstreamCerrado,
+        delay(3000).then(() => assert.fail('Downstream cancellation did not close upstream')),
+      ])
+      harness.clearRequests()
+    })
+
+    await suite.test('operator SSE gives Last-Event-ID precedence and rejects malformed cursor', async () => {
+      const cookie = `smart_parking_session=${marker()}`
+      const plan: UpstreamPlan = {
+        status: 200,
+        body: 'retry: 1000\n\n',
+        stream: true,
+        headers: { 'content-type': 'text/event-stream' },
+      }
+      harness.queueResponse(plan)
+      const respuesta = await fetch(
+        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=41`,
+        { headers: { cookie, 'last-event-id': '42' } },
+      )
+      const lector = respuesta.body?.getReader()
+      assert.ok(lector)
+      await lector.read()
+      assert.equal(harness.requests[0]?.lastEventId, '42', 'Reconnection cursor takes precedence')
+      await lector.cancel()
+
+      harness.clearRequests()
+      const invalida = await fetch(
+        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=4x`,
+        { headers: { cookie } },
+      )
+      await invalida.arrayBuffer()
+      assert.equal(invalida.status, 400, 'Malformed cursor is rejected at the same-origin boundary')
+      assert.equal(harness.requests.length, 0, 'Malformed cursor does not reach FastAPI')
     })
 
     await suite.test('all relevant upstream statuses and sanitized errors', async () => {

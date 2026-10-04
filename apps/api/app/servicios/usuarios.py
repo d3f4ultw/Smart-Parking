@@ -23,6 +23,7 @@ from app.seguridad.correos import (
     CorreoInvalidoError,
     normalizar_correo,
 )
+from app.servicios.eventos_operadores import registrar_evento_operador
 
 
 class ErrorCreacionAdmin(ValueError):
@@ -399,6 +400,7 @@ def crear_operador(
     apellido_paterno: str,
     apellido_materno: str,
     correo: str,
+    creado_por_usuario_id: int | None = None,
     entregar_invitacion: Callable[[Usuario, str], None],
     duracion_token_horas: int,
     ahora: datetime | None = None,
@@ -438,6 +440,7 @@ def crear_operador(
                 correo_verificado=False,
                 esta_activo=True,
                 debe_cambiar_contrasena=False,
+                creado_por_usuario_id=creado_por_usuario_id,
             )
             db.add(usuario)
             db.flush()
@@ -452,6 +455,7 @@ def crear_operador(
             db.add(activacion)
             db.flush()
             entregar_invitacion(usuario, token)
+            registrar_evento_operador(db, usuario.id, "operador.creado")
     except IntegrityError as error:
         db.rollback()
         if _es_duplicado_de_correo(error):
