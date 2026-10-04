@@ -1,0 +1,52 @@
+# Local environment and credentials
+.env
+.env.*
+*.env
+!/.env.example
+
+# Local AI and CodeGraph state
+/.agents/
+/.codegraph/
+
+# Local-only execution and audit history
+/reports/
+
+# Python environments and generated caches
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.uv_cache/
+
+# Nuxt and Node generated files
+node_modules/
+apps/web/.nuxt/
+apps/web/.output/
+apps/web/.nitro/
+apps/web/.data/
+apps/web/.cache/
+apps/web/dist/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*~
+
+# Web process core dumps
+/apps/web/core.*
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+desktop.ini
