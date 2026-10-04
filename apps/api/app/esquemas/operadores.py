@@ -1,5 +1,6 @@
 """Esquemas HTTP para crear cuentas OPERADOR desde el panel ADMIN."""
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -22,6 +23,18 @@ class RespuestaCrearOperador(BaseModel):
     estado: Literal["operador_creado"]
 
 
+class RespuestaCreadorOperador(BaseModel):
+    """Identidad ADMIN segura atribuida a la creacion del OPERADOR."""
+
+    model_config = ConfigDict(extra="forbid", from_attributes=True)
+
+    id: int
+    nombre: str | None
+    apellido_paterno: str | None
+    apellido_materno: str | None
+    correo: str
+
+
 class RespuestaOperador(BaseModel):
     """Vista publica minima de una cuenta OPERADOR."""
 
@@ -33,6 +46,8 @@ class RespuestaOperador(BaseModel):
     apellido_materno: str
     correo: str
     esta_activo: bool
+    creado_en: datetime
+    creado_por: RespuestaCreadorOperador | None
     estado_cuenta: Literal[
         "pendiente_activacion",
         "acceso_habilitado",
@@ -50,6 +65,7 @@ class RespuestaListaOperadores(BaseModel):
     tamano_pagina: int
     total: int
     total_paginas: int
+    cursor_eventos: str
 
 
 class RespuestaAccionOperador(BaseModel):
@@ -68,6 +84,7 @@ class RespuestaAccionOperador(BaseModel):
 __all__ = [
     "RespuestaAccionOperador",
     "RespuestaCrearOperador",
+    "RespuestaCreadorOperador",
     "RespuestaListaOperadores",
     "RespuestaOperador",
     "SolicitudCrearOperador",

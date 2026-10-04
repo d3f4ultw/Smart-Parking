@@ -275,11 +275,18 @@ def test_admin_lista_y_consulta_solo_operadores_con_campos_permitidos(
             "apellido_materno",
             "correo",
             "esta_activo",
+            "creado_en",
+            "creado_por",
             "estado_cuenta",
         }
         for fila in filas
     )
     assert all(fila["estado_cuenta"] == "acceso_habilitado" for fila in filas)
+    assert all(
+        datetime.fromisoformat(fila["creado_en"]).utcoffset() is not None
+        for fila in filas
+    )
+    assert all(fila["creado_por"] is None for fila in filas)
     assert all(fila["id"] != otro_admin.id for fila in filas)
     assert "contrasena_hash" not in respuesta.text
     assert "correo_verificado" not in respuesta.text
@@ -415,6 +422,7 @@ def test_admin_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
         "tamano_pagina": 10,
         "total": 0,
         "total_paginas": 0,
+        "cursor_eventos": "0",
     }
     assert vacia.headers["cache-control"] == "no-store"
     assert invalida.status_code == 422

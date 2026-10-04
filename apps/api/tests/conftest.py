@@ -8,12 +8,12 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine, delete, text
+from sqlalchemy import create_engine, delete, text, update
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import Settings
-from app.models import ActivacionCuenta, Sesion, Usuario
+from app.models import ActivacionCuenta, EstadoEventosOperadores, Sesion, Usuario
 from app.seguridad.limitador import limitador_activaciones, limitador_autenticacion
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +120,11 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(Sesion))
         session.execute(delete(ActivacionCuenta))
         session.execute(delete(Usuario))
+        session.execute(
+            update(EstadoEventosOperadores)
+            .where(EstadoEventosOperadores.id == 1)
+            .values(ultimo_id=0)
+        )
         session.commit()
         session.close()
         engine.dispose()

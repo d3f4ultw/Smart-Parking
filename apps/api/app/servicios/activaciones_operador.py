@@ -17,6 +17,7 @@ from app.seguridad.contrasenas import (
     validar_contrasena,
 )
 from app.servicios.autenticacion import revocar_sesiones_usuario
+from app.servicios.eventos_operadores import registrar_evento_operador
 
 
 class ActivacionOperadorNoDisponible(ValueError):
@@ -258,6 +259,8 @@ def completar_activacion_operador(
                 usuario_id=usuario.id,
                 ahora=ahora_commit,
             )
+            if usuario.rol == RolUsuario.OPERADOR.value:
+                registrar_evento_operador(db, usuario.id, "operador.actualizado")
     except ActivacionOperadorNoDisponible, ContrasenaInvalidaError:
         db.rollback()
         raise
