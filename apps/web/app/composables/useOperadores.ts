@@ -2,7 +2,9 @@ import type {
   RespuestaCrearOperador,
   SolicitudCrearOperador,
 } from '~/utils/operadores'
+import { obtenerSegundosRetryAfter } from '~/utils/gestion-operadores'
 import type {
+  DetalleOperadorConCooldown,
   Operador,
   RespuestaAccionOperador,
   RespuestaListaOperadores,
@@ -18,11 +20,37 @@ export function useOperadores() {
     })
   }
 
-  function obtenerOperador(operadorId: string | number) {
+  function obtenerOperador(operadorId: string | number, signal?: AbortSignal) {
     return fetchConCookies<Operador>(
       `/api/admin/operadores/${encodeURIComponent(String(operadorId))}`,
-      { credentials: 'same-origin' },
+      { credentials: 'same-origin', signal },
     )
+  }
+
+  async function obtenerDetalleOperador(
+    operadorId: string | number,
+    signal?: AbortSignal,
+  ): Promise<DetalleOperadorConCooldown> {
+    let cooldownReenvioSegundos = 0
+    const operador = await fetchConCookies<Operador>(
+      `/api/admin/operadores/${encodeURIComponent(String(operadorId))}`,
+      {
+        credentials: 'same-origin',
+        signal,
+        onResponse({ response }) {
+          if (response.ok) {
+            cooldownReenvioSegundos = obtenerSegundosRetryAfter(
+              response.headers.get('Retry-After'),
+            ) ?? 0
+          }
+        },
+      },
+    )
+
+    return {
+      operador,
+      cooldown_reenvio_segundos: cooldownReenvioSegundos,
+    }
   }
 
   function crearOperador(solicitud: SolicitudCrearOperador) {
@@ -54,10 +82,28 @@ export function useOperadores() {
     )
   }
 
-  function reenviarInvitacionOperador(operadorId: number) {
+  function reenviarInvitacionOperador(
+    operadorId: number,
+    alRecibirCooldown?: (segundos: number) => void,
+  ) {
     return $fetch<RespuestaAccionOperador>(
       `/api/admin/operadores/${operadorId}/reenviar-invitacion`,
-      { method: 'POST', credentials: 'same-origin' },
+      {
+        method: 'POST',
+        credentials: 'same-origin',
+        onResponse({ response }) {
+          if (!response.ok) {
+            return
+          }
+
+          const segundos = obtenerSegundosRetryAfter(
+            response.headers.get('Retry-After'),
+          )
+          if (segundos !== null) {
+            alRecibirCooldown?.(segundos)
+          }
+        },
+      },
     )
   }
 
@@ -65,6 +111,7 @@ export function useOperadores() {
     crearOperador,
     desactivarOperador,
     listarOperadores,
+    obtenerDetalleOperador,
     obtenerOperador,
     reactivarOperador,
     reenviarInvitacionOperador,

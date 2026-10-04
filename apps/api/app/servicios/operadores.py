@@ -10,7 +10,7 @@ from typing import Literal
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.correo.errores import ErrorCorreo
 from app.models import ActivacionCuenta, RolUsuario, Usuario
@@ -20,6 +20,7 @@ from app.seguridad.contrasenas import (
     generar_contrasena_operador,
 )
 from app.servicios.autenticacion import revocar_sesiones_usuario
+from app.servicios.eventos_operadores import registrar_evento_operador
 
 
 class ErrorGestionOperador(ValueError):
@@ -62,6 +63,17 @@ EstadoCuentaOperador = Literal[
 
 
 @dataclass(frozen=True, slots=True)
+class CreadorOperadorDTO:
+    """Campos de identidad permitidos para atribuir una creacion."""
+
+    id: int
+    nombre: str | None
+    apellido_paterno: str | None
+    apellido_materno: str | None
+    correo: str
+
+
+@dataclass(frozen=True, slots=True)
 class OperadorDTO:
     """Datos administrativos permitidos para mostrar un OPERADOR."""
 
@@ -71,6 +83,8 @@ class OperadorDTO:
     apellido_materno: str
     correo: str
     esta_activo: bool
+    creado_en: datetime
+    creado_por: CreadorOperadorDTO | None
     estado_cuenta: EstadoCuentaOperador
 
 
@@ -104,6 +118,7 @@ def _crear_dto(usuario: Usuario) -> OperadorDTO:
     else:
         estado_cuenta = "pendiente_activacion"
 
+    creador = usuario.creado_por
     return OperadorDTO(
         id=usuario.id,
         nombre=usuario.nombre or "",
@@ -111,6 +126,18 @@ def _crear_dto(usuario: Usuario) -> OperadorDTO:
         apellido_materno=usuario.apellido_materno or "",
         correo=usuario.correo,
         esta_activo=usuario.esta_activo,
+        creado_en=usuario.creado_en,
+        creado_por=(
+            CreadorOperadorDTO(
+                id=creador.id,
+                nombre=creador.nombre,
+                apellido_paterno=creador.apellido_paterno,
+                apellido_materno=creador.apellido_materno,
+                correo=creador.correo,
+            )
+            if creador is not None
+            else None
+        ),
         estado_cuenta=estado_cuenta,
     )
 
@@ -128,6 +155,7 @@ def listar_operadores(db: Session, pagina: int) -> ResultadoListaOperadores:
     usuarios = db.scalars(
         select(Usuario)
         .where(filtro_operadores)
+        .options(selectinload(Usuario.creado_por))
         .order_by(Usuario.id)
         .limit(TAMANO_PAGINA_OPERADORES)
         .offset((pagina_efectiva - 1) * TAMANO_PAGINA_OPERADORES)
@@ -148,7 +176,7 @@ def obtener_operador(db: Session, operador_id: int) -> OperadorDTO:
         select(Usuario).where(
             Usuario.id == operador_id,
             Usuario.rol == RolUsuario.OPERADOR.value,
-        )
+        ).options(selectinload(Usuario.creado_por))
     )
     if usuario is None:
         raise OperadorNoEncontradoError
@@ -204,6 +232,7 @@ def desactivar_operador(
                 usuario_id=usuario.id,
                 ahora=ahora_utc,
             )
+            registrar_evento_operador(db, usuario.id, "operador.actualizado")
     except SQLAlchemyError:
         db.rollback()
         raise
@@ -221,6 +250,7 @@ def reactivar_operador(
             if usuario.esta_activo:
                 raise OperadorYaActivoError
             usuario.esta_activo = True
+            registrar_evento_operador(db, usuario.id, "operador.actualizado")
     except SQLAlchemyError:
         db.rollback()
         raise
@@ -287,6 +317,34 @@ def _cooldown_invitacion_activo(
         ).total_seconds()
     )
     return max(0, restante)
+
+
+def obtener_cooldown_reenvio_operador(
+    db: Session,
+    operador_id: int,
+    *,
+    cooldown_segundos: int,
+    ahora: datetime | None = None,
+) -> int:
+    """Calcula el cooldown vigente desde la ultima activacion registrada."""
+
+    if cooldown_segundos <= 0:
+        raise ValueError("La configuracion de reenvio no es valida.")
+
+    activacion = db.scalar(
+        select(ActivacionCuenta)
+        .where(ActivacionCuenta.usuario_id == operador_id)
+        .order_by(desc(ActivacionCuenta.creado_en), desc(ActivacionCuenta.id))
+        .limit(1)
+    )
+    if activacion is None:
+        return 0
+
+    return _cooldown_invitacion_activo(
+        activacion,
+        cooldown_segundos=cooldown_segundos,
+        ahora_utc=_ahora_utc(ahora),
+    )
 
 
 def _operador_pendiente_activo(usuario: Usuario) -> bool:

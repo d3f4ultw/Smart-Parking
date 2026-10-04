@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import StrEnum
 
@@ -5,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    ForeignKey,
     Identity,
     Index,
     Integer,
@@ -12,7 +15,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, validates
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.database import Base
 
@@ -75,6 +78,15 @@ class Usuario(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    creado_por_usuario_id: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
+    creado_por: Mapped[Usuario | None] = relationship(
+        remote_side=[id],
+        foreign_keys=[creado_por_usuario_id],
     )
 
     @validates("rol")
