@@ -184,7 +184,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', manejarTeclado))
             <path d="M3 20V9l9-5 9 5v11M3 12h18M7 20v-5h10v5" />
           </svg>
           <span>Estacionamiento</span>
-          <small>Próximamente</small>
         </button>
         <NuxtLink
           class="navigation-item"
@@ -416,10 +415,11 @@ a {
 
 .navigation-item {
   display: flex;
-  width: 100%;
+  width: auto;
   min-height: 2.8rem;
   align-items: center;
   gap: 0.8rem;
+  margin-right: 0.75rem;
   padding: 0.65rem 0.75rem;
   color: #c9c3d0;
   background: transparent;
