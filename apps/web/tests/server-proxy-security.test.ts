@@ -15,6 +15,7 @@ type UpstreamPlan = {
   body?: string
   headers?: Record<string, string | string[]>
   stream?: boolean
+  firstChunkDelayMs?: number
   onClose?: () => void
 }
 
@@ -223,8 +224,18 @@ async function startHarness(): Promise<Harness> {
         const plan = plans.shift() ?? jsonPlan(200, { estado: 'fixture' })
         response.writeHead(plan.status, plan.headers ?? {})
         if (plan.stream) {
+          response.flushHeaders()
           if (plan.onClose) {
             response.once('close', plan.onClose)
+          }
+          if ((plan.firstChunkDelayMs ?? 0) > 0) {
+            const temporizador = setTimeout(() => {
+              if (!response.destroyed) {
+                response.write(plan.body ?? '')
+              }
+            }, plan.firstChunkDelayMs)
+            response.once('close', () => clearTimeout(temporizador))
+            return
           }
           response.write(plan.body ?? '')
           return
@@ -590,6 +601,31 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assertForwarded(page, 'GET', '/api/admin/operadores?pagina=2')
       assert.ok(page.upstreamRequest.query === '?pagina=2', 'Only intended pagination query was forwarded')
 
+      const searchCookie = 'smart_parking_session=' + marker()
+      const searchedPage = await send(
+        '/api/admin/operadores?pagina=2&buscar=Coincidencia+Global&rol=ADMIN&user_id=' + marker(),
+        { headers: { cookie: searchCookie } },
+        jsonPlan(200, { pagina: 2, operadores: [], total: 0, total_paginas: 0 }),
+      )
+      assert.ok(searchedPage.response.status === 200, 'Search list status was preserved')
+      assertForwarded(
+        searchedPage,
+        'GET',
+        '/api/admin/operadores?pagina=2&buscar=Coincidencia+Global',
+      )
+      assert.ok(
+        searchedPage.upstreamRequest.query === '?pagina=2&buscar=Coincidencia+Global',
+        'Only page and the allowlisted search value were forwarded',
+      )
+      assert.ok(
+        searchedPage.upstreamRequest.cookie === searchCookie,
+        'The ADMIN session cookie remains forwarded',
+      )
+      assert.ok(
+        searchedPage.response.headers.get('cache-control') === 'no-store',
+        'Search results remain no-store',
+      )
+
       const invalidPage = await send(
         '/api/admin/operadores?pagina=invalid',
         {},
@@ -680,9 +716,9 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
-    await suite.test('operator SSE forwards its private stream and cancels upstream', async () => {
+    await suite.test('unified SSE forwards its private stream and cancels upstream', async () => {
       const cookie = `smart_parking_session=${marker()}`
-      const payload = 'id: 41\nevent: operador.actualizado\ndata: {"operador_id":9}\n\n'
+      const payload = 'id: 41\nevent: operador.actualizado\ndata: {"recurso_tipo":"operador","recurso_id":9}\n\n'
       let cerrarUpstream!: () => void
       const upstreamCerrado = new Promise<void>((resolve) => {
         cerrarUpstream = resolve
@@ -699,8 +735,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       })
 
       const respuesta = await fetch(
-        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=41&rol=ADMIN`,
-        { headers: { cookie } },
+        `${harness.origin}/api/eventos?cursor_eventos=41&rol=ADMIN&topic=operador.creado`,
+        { headers: { cookie }, signal: AbortSignal.timeout(10_000) },
       )
       assert.equal(respuesta.status, 200, 'SSE response status is preserved')
       assert.equal(respuesta.headers.get('content-type')?.startsWith('text/event-stream'), true)
@@ -708,21 +744,24 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assert.equal(respuesta.headers.get('x-accel-buffering'), 'no')
       const lector = respuesta.body?.getReader()
       assert.ok(lector, 'SSE body is readable as a stream')
-      const primerBloque = await lector.read()
-      assert.equal(primerBloque.done, false, 'Upstream remains open while client reads')
-      assert.ok(
-        new TextDecoder().decode(primerBloque.value).includes('operador.actualizado'),
-        'SSE event arrives before the upstream response ends',
-      )
+      let cuerpoSse = ''
+      while (!cuerpoSse.includes('operador.actualizado')) {
+        const bloque = await lector.read()
+        assert.equal(bloque.done, false, 'Upstream remains open while client reads')
+        cuerpoSse += new TextDecoder().decode(bloque.value)
+      }
+      assert.ok(cuerpoSse.includes('operador.actualizado'), 'SSE event reaches the client')
       const solicitud = harness.requests[0]
       assert.ok(solicitud, 'SSE request reached the private upstream')
-      assert.equal(solicitud.path, '/api/admin/operadores/eventos')
-      assert.equal(solicitud.query, '', 'SSE query parameters are not forwarded')
+      assert.equal(solicitud.path, '/api/eventos')
+      assert.equal(solicitud.query, '?cursor_eventos=41', 'Only the validated cursor is forwarded')
       assert.equal(solicitud.cookie, cookie, 'Authenticated cookie is forwarded')
       assert.equal(solicitud.accept, 'text/event-stream', 'Event stream Accept is explicit')
-      assert.equal(solicitud.lastEventId, '41', 'Initial cursor becomes Last-Event-ID')
+      assert.equal(solicitud.lastEventId, undefined, 'Initial cursor stays distinct from native reconnect state')
+      assert.equal(solicitud.role, undefined, 'Browser role is not forwarded')
+      assert.equal(solicitud.roleAlias, undefined, 'Role alias is not forwarded')
 
-      await lector.cancel()
+      void lector.cancel()
       await Promise.race([
         upstreamCerrado,
         delay(3000).then(() => assert.fail('Downstream cancellation did not close upstream')),
@@ -730,7 +769,22 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
-    await suite.test('operator SSE gives Last-Event-ID precedence and rejects malformed cursor', async () => {
+    await suite.test('legacy SSE BFF is only an alias to the unified upstream route', async () => {
+      const cookie = `smart_parking_session=${marker()}`
+      const respuesta = await send(
+        '/api/admin/operadores/eventos?cursor_eventos=19',
+        { headers: { cookie } },
+        jsonPlan(401, { detail: 'No autenticado' }),
+      )
+      assert.equal(respuesta.response.status, 401)
+      assertForwarded(respuesta, 'GET', '/api/eventos?cursor_eventos=19')
+      assert.equal(respuesta.upstreamRequest?.cookie, cookie)
+      assert.equal(respuesta.response.headers.get('cache-control'), 'no-store')
+      assertNoSensitiveBody(respuesta.body)
+      harness.clearRequests()
+    })
+
+    await suite.test('unified SSE preserves both cursors and rejects malformed initial cursor', async () => {
       const cookie = `smart_parking_session=${marker()}`
       const plan: UpstreamPlan = {
         status: 200,
@@ -740,23 +794,72 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       }
       harness.queueResponse(plan)
       const respuesta = await fetch(
-        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=41`,
-        { headers: { cookie, 'last-event-id': '42' } },
+        `${harness.origin}/api/eventos?cursor_eventos=41`,
+        { headers: { cookie, 'last-event-id': '42' }, signal: AbortSignal.timeout(10_000) },
       )
       const lector = respuesta.body?.getReader()
       assert.ok(lector)
       await lector.read()
-      assert.equal(harness.requests[0]?.lastEventId, '42', 'Reconnection cursor takes precedence')
+      assert.equal(harness.requests[0]?.lastEventId, '42', 'Native reconnect cursor is preserved')
+      assert.equal(harness.requests[0]?.query, '?cursor_eventos=41')
       await lector.cancel()
 
       harness.clearRequests()
       const invalida = await fetch(
-        `${harness.origin}/api/admin/operadores/eventos?cursor_eventos=4x`,
+        `${harness.origin}/api/eventos?cursor_eventos=4x`,
         { headers: { cookie } },
       )
       await invalida.arrayBuffer()
       assert.equal(invalida.status, 400, 'Malformed cursor is rejected at the same-origin boundary')
       assert.equal(harness.requests.length, 0, 'Malformed cursor does not reach FastAPI')
+    })
+
+    await suite.test('successful SSE headers flush before a delayed first body chunk', async () => {
+      const cookie = `smart_parking_session=${marker()}`
+      let cerrarUpstream!: () => void
+      const upstreamCerrado = new Promise<void>((resolve) => {
+        cerrarUpstream = resolve
+      })
+      harness.queueResponse({
+        status: 200,
+        body: 'retry: 1000\n\n',
+        stream: true,
+        firstChunkDelayMs: 1800,
+        headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+        onClose: cerrarUpstream,
+      })
+
+      const inicio = Date.now()
+      const respuesta = await fetch(`${harness.origin}/api/eventos`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(5000),
+      })
+      const demora = Date.now() - inicio
+      assert.equal(respuesta.status, 200)
+      assert.ok(demora < 1200, `SSE response headers took ${demora} ms`)
+      assert.equal(respuesta.headers.get('content-type')?.startsWith('text/event-stream'), true)
+      assert.equal(respuesta.headers.get('cache-control'), 'no-store')
+      assert.equal(respuesta.headers.get('x-accel-buffering'), 'no')
+      void respuesta.body?.cancel()
+      await Promise.race([
+        upstreamCerrado,
+        delay(3000).then(() => assert.fail('Delayed SSE cancellation did not close upstream')),
+      ])
+      harness.clearRequests()
+    })
+
+    await suite.test('non-SSE error bodies keep status and JSON response semantics', async () => {
+      for (const status of [401, 429, 503]) {
+        const result = await send(
+          '/api/eventos',
+          {},
+          jsonPlan(status, { detail: `fixture-${status}` }),
+        )
+        assert.equal(result.response.status, status)
+        assert.equal(result.response.headers.get('content-type')?.startsWith('application/json'), true)
+        assert.ok(matchesFlatJson(result.body, { detail: `fixture-${status}` }))
+      }
+      harness.clearRequests()
     })
 
     await suite.test('all relevant upstream statuses and sanitized errors', async () => {

@@ -85,7 +85,6 @@ async function enviarFormulario() {
           <header class="login-header">
             <p class="eyebrow">Acceso a tu cuenta</p>
             <h1 id="login-title">Inicia sesión</h1>
-            <p>Ingresa tus datos para acceder a tu cuenta.</p>
           </header>
 
           <form

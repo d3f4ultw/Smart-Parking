@@ -20,6 +20,7 @@ from app.api.rutas.autenticacion import (
 from app.api.rutas.autenticacion import (
     router as autenticacion_router,
 )
+from app.api.rutas.eventos import router as eventos_tiempo_real_router
 from app.api.rutas.operadores import (
     RUTA_CREAR_OPERADOR,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "activaciones_router",
     "activaciones_operador_router",
     "autenticacion_router",
+    "eventos_tiempo_real_router",
     "operadores_router",
     "reenvio_activacion_router",
 ]

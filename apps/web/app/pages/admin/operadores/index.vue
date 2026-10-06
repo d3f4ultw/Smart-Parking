@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
+import {
+  usarEventosTiempoReal,
+  type EstadoEventosTiempoReal,
+} from '~/utils/eventos-tiempo-real'
 import { obtenerEstadoErrorOperador } from '~/utils/operadores'
 import {
   compararCursoresEventos,
   crearRegistroCreacionesOperador,
   crearReconciliadorOperadores,
-  crearStreamOperadores,
   puedeInsertarCreacionEnPagina,
-  type EstadoSseOperadores,
 } from '~/utils/operadores-tiempo-real'
+import { crearDebounceBusquedaOperadores } from '~/utils/busqueda-operadores'
 import {
   etiquetaCreadorOperador,
   etiquetaEstadoCuentaOperador,
@@ -32,24 +35,38 @@ const router = useRouter()
 const { listarOperadores, obtenerOperador } = useOperadores()
 const { limpiarSesion } = useSesion()
 const { mostrarToast, limpiarToasts } = useAdminToasts()
+const eventosTiempoReal = usarEventosTiempoReal()
 const mensajeError = ref('')
 const busqueda = ref('')
+const buscarServidor = ref('')
 const filtroEstado = ref<'todos' | 'activos' | 'inactivos'>('todos')
+const paginaForzadaBusqueda = ref(false)
 const dialogoCrearAbierto = ref(false)
 const operadorDetalleId = ref<string | null>(null)
 const idsCargando = ref(new Set<number>())
 const idsAccionOcupada = ref(new Set<number>())
 const idsCreacionTemporal = ref(new Set<number>())
 const creacionesProcesadas = crearRegistroCreacionesOperador()
-const estadoStream = ref<EstadoSseOperadores>('detenido')
+const estadoStream = eventosTiempoReal.estado
 const paginaSolicitada = computed(() =>
-  obtenerPaginaSolicitadaOperadores(route.query.pagina),
+  paginaForzadaBusqueda.value
+    ? 1
+    : obtenerPaginaSolicitadaOperadores(route.query.pagina),
 )
 const dialogoDetalleAbierto = computed(() => operadorDetalleId.value !== null)
+const paginaConsultaCompletada = ref(paginaSolicitada.value)
 
 const { data, error, pending, refresh } = await useAsyncData<RespuestaListaOperadores>(
   CLAVE_LISTA_OPERADORES,
-  () => listarOperadores(paginaSolicitada.value),
+  async (_nuxtApp, { signal }) => {
+    const pagina = paginaSolicitada.value
+    const buscar = buscarServidor.value
+    const respuesta = await listarOperadores(pagina, signal, buscar || undefined)
+    if (!signal.aborted) {
+      paginaConsultaCompletada.value = pagina
+    }
+    return respuesta
+  },
   {
     default: () => ({
       operadores: [],
@@ -59,28 +76,31 @@ const { data, error, pending, refresh } = await useAsyncData<RespuestaListaOpera
       total_paginas: 0,
       cursor_eventos: '0',
     }),
-    dedupe: 'defer',
-    watch: [paginaSolicitada],
+    dedupe: 'cancel',
+    watch: [paginaSolicitada, buscarServidor],
   },
 )
 
 const paginaActual = computed(() => data.value.pagina)
+const cambiandoPagina = computed(
+  () => pending.value && paginaSolicitada.value !== paginaActual.value,
+)
+const paginaMostrada = computed(
+  () => cambiandoPagina.value ? paginaSolicitada.value : paginaActual.value,
+)
+const filasEsqueletoPagina = computed(() => {
+  const filasRestantes = data.value.total
+    - ((paginaSolicitada.value - 1) * data.value.tamano_pagina)
+  const cantidad = Math.max(1, Math.min(data.value.tamano_pagina, filasRestantes))
+  return Array.from({ length: cantidad }, (_, indice) => indice)
+})
 const operadoresFiltrados = computed(() => {
-  const consulta = busqueda.value.trim().toLocaleLowerCase('es-MX')
-
   return data.value.operadores.filter((operador) => {
-    const nombre = [
-      operador.nombre,
-      operador.apellido_paterno,
-      operador.apellido_materno,
-    ].filter(Boolean).join(' ')
-    const coincideBusqueda = consulta.length === 0
-      || `${nombre} ${operador.correo}`.toLocaleLowerCase('es-MX').includes(consulta)
     const coincideEstado = filtroEstado.value === 'todos'
       || (filtroEstado.value === 'activos' && operador.esta_activo)
       || (filtroEstado.value === 'inactivos' && !operador.esta_activo)
 
-    return coincideBusqueda && coincideEstado
+    return coincideEstado
   })
 })
 
@@ -96,7 +116,9 @@ const filasVisibles = computed<FilaVisibleOperador[]>(() => {
     operador,
   }))
   const mostrarEsqueletosTemporales =
-    busqueda.value.trim().length === 0 && filtroEstado.value === 'todos'
+    busqueda.value.trim().length === 0
+    && buscarServidor.value.length === 0
+    && filtroEstado.value === 'todos'
 
   for (const id of idsCreacionTemporal.value) {
     if (mostrarEsqueletosTemporales && !idsOperadores.has(id)) {
@@ -110,9 +132,12 @@ const idsOcupados = computed(() => new Set([
   ...idsCargando.value,
   ...idsAccionOcupada.value,
 ]))
-const ariaBusy = computed(() => pending.value || idsOcupados.value.size > 0)
+const busquedaPendiente = computed(() => busqueda.value.trim() !== buscarServidor.value)
+const ariaBusy = computed(
+  () => pending.value || busquedaPendiente.value || idsOcupados.value.size > 0,
+)
 const etiquetaEstadoStream = computed(() => {
-  const etiquetas: Record<EstadoSseOperadores, string> = {
+  const etiquetas: Record<EstadoEventosTiempoReal, string> = {
     conectando: 'Conectando actualizaciones en tiempo real…',
     conectado: 'Actualizaciones en tiempo real conectadas',
     reconectando: 'Reconectando actualizaciones en tiempo real…',
@@ -152,6 +177,44 @@ function consultaConModal(modal?: 'crear' | 'detalle', operadorId?: string) {
     ...(modal === 'detalle' && operadorId ? { operador: operadorId } : {}),
   }
 }
+
+function consultaModalActual() {
+  if (route.query.modal === 'crear') {
+    return { modal: 'crear' }
+  }
+  if (route.query.modal === 'detalle' && typeof route.query.operador === 'string') {
+    return { modal: 'detalle', operador: route.query.operador }
+  }
+  return {}
+}
+
+function aplicarBusquedaEfectiva(consulta: string) {
+  if (consulta === buscarServidor.value) {
+    return
+  }
+
+  const reiniciarPagina = obtenerPaginaSolicitadaOperadores(route.query.pagina) > 1
+  if (reiniciarPagina) {
+    paginaForzadaBusqueda.value = true
+  }
+  buscarServidor.value = consulta
+
+  if (reiniciarPagina) {
+    void router.replace({
+      path: '/admin/operadores',
+      query: consultaModalActual(),
+    }).then(
+      () => {
+        paginaForzadaBusqueda.value = false
+      },
+      () => {
+        paginaForzadaBusqueda.value = false
+      },
+    )
+  }
+}
+
+const debounceBusqueda = crearDebounceBusquedaOperadores(aplicarBusquedaEfectiva)
 
 function abrirDialogoCrear() {
   dialogoCrearAbierto.value = true
@@ -259,6 +322,8 @@ type EventoPendienteOperador =
   | { tipo: 'creado'; id: number; cursorEvento: string }
 
 const eventosDuranteCarga = ref<EventoPendienteOperador[]>([])
+let temporizadorRefrescoBusqueda: ReturnType<typeof setTimeout> | null = null
+let refrescoBusquedaSolicitado = false
 
 function procesarCreacionOperador(id: number, cursorEvento: string) {
   const yaVisible = estaEnPaginaActual(id)
@@ -287,6 +352,10 @@ function procesarCreacionOperador(id: number, cursorEvento: string) {
 
 function manejarCreacionOperador(id: number, cursorEvento: string) {
   if (!creacionesProcesadas.aceptar(id)) {
+    return
+  }
+  if (buscarServidor.value.length > 0) {
+    programarRefrescoBusquedaActiva()
     return
   }
   if (pending.value || paginaSolicitada.value !== data.value.pagina) {
@@ -342,31 +411,62 @@ async function recuperarPaginaActual(): Promise<void> {
     await recuperacionResync
   } finally {
     recuperacionResync = null
+    if (refrescoBusquedaSolicitado) {
+      refrescoBusquedaSolicitado = false
+      programarRefrescoBusquedaActiva()
+    }
   }
 }
 
-const stream = crearStreamOperadores({
-  cursorInicial: data.value.cursor_eventos,
-  comprobarSesion: async () => {
-    try {
-      const respuesta = await fetch('/api/autenticacion/me', {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      })
-      return respuesta.status
-    } catch {
-      return 0
+function programarRefrescoBusquedaActiva() {
+  if (buscarServidor.value.length === 0) {
+    refrescoBusquedaSolicitado = false
+    if (temporizadorRefrescoBusqueda !== null) {
+      clearTimeout(temporizadorRefrescoBusqueda)
+      temporizadorRefrescoBusqueda = null
     }
+    return
+  }
+
+  if (
+    pending.value
+    || paginaSolicitada.value !== data.value.pagina
+    || recuperacionResync !== null
+  ) {
+    refrescoBusquedaSolicitado = true
+    return
+  }
+  if (temporizadorRefrescoBusqueda !== null) {
+    return
+  }
+
+  temporizadorRefrescoBusqueda = setTimeout(() => {
+    temporizadorRefrescoBusqueda = null
+    if (
+      buscarServidor.value.length === 0
+      || pending.value
+      || paginaSolicitada.value !== data.value.pagina
+      || recuperacionResync !== null
+    ) {
+      refrescoBusquedaSolicitado = buscarServidor.value.length > 0
+      return
+    }
+    refrescoBusquedaSolicitado = false
+    void recuperarPaginaActual()
+  }, 150)
+}
+
+const suscripcionEventos = eventosTiempoReal.suscribir(
+  data.value.cursor_eventos,
+  {
+    alActualizarOperador: manejarActualizacionOperador,
+    alCrearOperador: manejarCreacionOperador,
+    alResync: recuperarPaginaActual,
   },
-  alRecibirActualizacion: manejarActualizacionOperador,
-  alRecibirCreacion: manejarCreacionOperador,
-  alRecibirResync: recuperarPaginaActual,
-  alCambiarEstado: (estado) => {
-    estadoStream.value = estado
-  },
-  alPerderSesion: () => {
-    void atenderError({ statusCode: 401 })
-  },
+)
+
+watch(() => data.value.cursor_eventos, (cursor) => {
+  suscripcionEventos.actualizarCursor(cursor)
 })
 
 if (error.value) {
@@ -379,7 +479,21 @@ watch(error, (errorActual) => {
   }
 })
 
-watch(paginaSolicitada, () => {
+watch(busqueda, (texto) => {
+  const consulta = texto.trim()
+  if (consulta === buscarServidor.value) {
+    debounceBusqueda.cancelar()
+    return
+  }
+  if (consulta.length === 0) {
+    debounceBusqueda.cancelar()
+    aplicarBusquedaEfectiva('')
+    return
+  }
+  debounceBusqueda.programar(consulta)
+})
+
+watch([paginaSolicitada, buscarServidor], () => {
   mensajeError.value = ''
   reconciliador.suspenderYDescartar()
 })
@@ -393,11 +507,23 @@ watch([pending, error], ([estaPendiente]) => {
     eventosDuranteCarga.value = []
     for (const evento of eventos) {
       if (evento.tipo === 'creado') {
-        procesarCreacionOperador(evento.id, evento.cursorEvento)
+        if (buscarServidor.value.length > 0) {
+          programarRefrescoBusquedaActiva()
+        } else {
+          procesarCreacionOperador(evento.id, evento.cursorEvento)
+        }
       } else {
         manejarActualizacionOperador(evento.id)
       }
     }
+  }
+  if (
+    !estaPendiente
+    && recuperacionResync === null
+    && refrescoBusquedaSolicitado
+  ) {
+    refrescoBusquedaSolicitado = false
+    programarRefrescoBusquedaActiva()
   }
 })
 
@@ -412,36 +538,49 @@ watch([() => route.query.modal, () => route.query.operador], ([modal, operadorId
     : null
 }, { immediate: true })
 
-watch([paginaSolicitada, data, pending, error], ([pagina, respuesta, estaPendiente, errorActual]) => {
-  if (!import.meta.client || estaPendiente || errorActual) {
-    return
-  }
+watch(
+  [paginaConsultaCompletada, data, pending, error],
+  ([paginaConsultada, respuesta, estaPendiente, errorActual]) => {
+    const pagina = paginaSolicitada.value
+    if (
+      !import.meta.client
+      || estaPendiente
+      || errorActual
+      || paginaForzadaBusqueda.value
+      || paginaConsultada !== pagina
+    ) {
+      return
+    }
 
-  const paginaEfectiva = respuesta.pagina
-  const parametroEsperado = paginaEfectiva > 1 ? String(paginaEfectiva) : undefined
-  const parametroActual = route.query.pagina
-  const urlCanonica = parametroEsperado === undefined
-    ? parametroActual === undefined
-    : parametroActual === parametroEsperado
+    const paginaEfectiva = respuesta.pagina
+    const parametroEsperado = paginaEfectiva > 1 ? String(paginaEfectiva) : undefined
+    const parametroActual = route.query.pagina
+    const urlCanonica = parametroEsperado === undefined
+      ? parametroActual === undefined
+      : parametroActual === parametroEsperado
 
-  if (!urlCanonica || pagina !== paginaEfectiva) {
-    void router.replace({
-      path: '/admin/operadores',
-      query: {
-        ...(parametroEsperado ? { pagina: parametroEsperado } : {}),
-        ...(route.query.modal === 'crear' ? { modal: 'crear' } : {}),
-        ...(route.query.modal === 'detalle' && typeof route.query.operador === 'string'
-          ? { modal: 'detalle', operador: route.query.operador }
-          : {}),
-      },
-    })
-  }
-}, { flush: 'post', immediate: true })
-
-onMounted(() => stream.iniciar())
+    if (!urlCanonica || pagina !== paginaEfectiva) {
+      void router.replace({
+        path: '/admin/operadores',
+        query: {
+          ...(parametroEsperado ? { pagina: parametroEsperado } : {}),
+          ...(route.query.modal === 'crear' ? { modal: 'crear' } : {}),
+          ...(route.query.modal === 'detalle' && typeof route.query.operador === 'string'
+            ? { modal: 'detalle', operador: route.query.operador }
+            : {}),
+        },
+      })
+    }
+  },
+  { flush: 'post', immediate: true },
+)
 
 onUnmounted(() => {
-  stream.detener()
+  debounceBusqueda.cancelar()
+  if (temporizadorRefrescoBusqueda !== null) {
+    clearTimeout(temporizadorRefrescoBusqueda)
+  }
+  suscripcionEventos.detener()
   reconciliador.detener()
   clearNuxtData(CLAVE_LISTA_OPERADORES)
 })
@@ -481,7 +620,7 @@ onUnmounted(() => {
             <path d="m16 16 4.5 4.5" />
           </svg>
           <span class="sr-only">Buscar operadores</span>
-          <input id="operator-search" v-model="busqueda" type="search" placeholder="Buscar por nombre o correo">
+          <input id="operator-search" v-model="busqueda" type="search" maxlength="320" placeholder="Buscar por nombre o correo">
         </label>
         <label class="status-filter" for="operator-status">
           <span>Estado</span>
@@ -492,21 +631,20 @@ onUnmounted(() => {
           </select>
         </label>
       </div>
-      <p class="filter-note">La búsqueda y el estado se aplican a la página actual.</p>
       <p class="panel-copy">
         {{ data.total }} {{ data.total === 1 ? 'cuenta' : 'cuentas' }} ·
-        Página {{ data.pagina }} de {{ Math.max(data.total_paginas, 1) }}
+        Página {{ paginaMostrada }} de {{ Math.max(data.total_paginas, 1) }}
       </p>
 
       <p v-if="pending && data.total === 0" class="empty-state" role="status">
         Cargando operadores…
       </p>
       <p v-else-if="data.total === 0 && !mensajeError" class="empty-state" role="status">
-        No hay cuentas de operador registradas.
+        {{ buscarServidor ? 'No hay operadores que coincidan con la búsqueda.' : 'No hay cuentas de operador registradas.' }}
       </p>
       <template v-else-if="data.total > 0">
-        <p v-if="pending" class="inline-status" role="status">Actualizando página…</p>
-        <div v-if="filasVisibles.length === 0" class="empty-state" role="status">
+        <p v-if="cambiandoPagina" class="inline-status" role="status">Actualizando página…</p>
+        <div v-if="!cambiandoPagina && filasVisibles.length === 0" class="empty-state" role="status">
           No hay operadores que coincidan con los filtros de esta página.
         </div>
         <div v-else class="table-scroll" tabindex="0" aria-label="Tabla desplazable de operadores">
@@ -529,7 +667,22 @@ onUnmounted(() => {
                 <th scope="col">Acciones</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody v-if="cambiandoPagina">
+              <tr
+                v-for="fila in filasEsqueletoPagina"
+                :key="`pagina-${paginaSolicitada}-${fila}`"
+                aria-busy="true"
+              >
+                <td v-for="columna in COLUMNAS_SKELETON" :key="columna">
+                  <span
+                    class="row-skeleton"
+                    :class="`skeleton-column-${columna}`"
+                    aria-hidden="true"
+                  />
+                </td>
+              </tr>
+            </tbody>
+            <tbody v-else>
               <tr
                 v-for="fila in filasVisibles"
                 :key="`${fila.tipo}-${fila.id}`"
@@ -586,7 +739,7 @@ onUnmounted(() => {
           <button class="button secondary" type="button" :disabled="pending || paginaActual <= 1" @click="cambiarPagina(paginaActual - 1)">
             Anterior
           </button>
-          <span>Página {{ paginaActual }} de {{ data.total_paginas }}</span>
+          <span>Página {{ paginaMostrada }} de {{ data.total_paginas }}</span>
           <button class="button secondary" type="button" :disabled="pending || paginaActual >= data.total_paginas" @click="cambiarPagina(paginaActual + 1)">
             Siguiente
           </button>
