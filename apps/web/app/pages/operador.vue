@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+import { usarEventosTiempoReal } from '~/utils/eventos-tiempo-real'
 import { mapearErrorLogout } from '~/utils/logout'
 import { obtenerNombreCompleto } from '~/utils/sesion'
 
 definePageMeta({
+  layout: 'operador',
   middleware: 'sesion-operador',
 })
 
 const { usuario, limpiarSesion } = useSesion()
 const { cerrarSesion } = useLogout()
+const eventosTiempoReal = usarEventosTiempoReal()
 const estadoLogout = ref<'listo' | 'enviando' | 'error'>('listo')
 const mensajeError = ref('')
 
@@ -29,6 +32,7 @@ async function enviarLogout() {
     return
   }
 
+  eventosTiempoReal.detener()
   limpiarSesion()
   await navigateTo('/login', { replace: true })
 }

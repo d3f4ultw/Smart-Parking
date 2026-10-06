@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, delete, event, func, select
 from sqlalchemy.engine import URL, Engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.api.rutas import eventos as rutas_eventos
 from app.api.rutas import operadores as rutas_operadores
 from app.core.config import Settings
 from app.core.database import get_db
@@ -33,6 +34,7 @@ from app.servicios.eventos_operadores import (
     EventoSSE,
     ResultadoLoteEventosSSE,
     admitir_conexion_sse_admin,
+    registrar_evento_operador,
 )
 from app.servicios.operadores import listar_operadores
 from app.servicios.usuarios import crear_admin, crear_operador
@@ -88,7 +90,7 @@ def client(
             db.close()
 
     app.dependency_overrides[get_db] = entregar_db
-    monkeypatch.setattr(rutas_operadores, "SessionLocal", fabrica)
+    monkeypatch.setattr(rutas_eventos, "SessionLocal", fabrica)
     try:
         with TestClient(app) as cliente:
             yield cliente
@@ -313,9 +315,13 @@ def test_listado_captura_cursor_antes_de_consultar_la_pagina(
         llamadas.append("cursor")
         return obtener_marca_original(sesion)
 
-    def registrar_listado(sesion: Session, pagina: int):
+    def registrar_listado(
+        sesion: Session,
+        pagina: int,
+        buscar: str | None = None,
+    ):
         llamadas.append("pagina")
-        return listar_original(sesion, pagina)
+        return listar_original(sesion, pagina, buscar)
 
     client.cookies.set(NOMBRE_COOKIE, token)
     with (
@@ -398,33 +404,14 @@ def test_crear_admin_bootstrap_conserva_timestamp_db_y_creador_nulo(
     assert resultado.usuario.creado_por_usuario_id is None
 
 
-@pytest.mark.parametrize(
-    "estado",
-    ["sin_cookie", "operador", "expirada", "revocada", "inactiva"],
-)
+@pytest.mark.parametrize("estado", ["sin_cookie", "expirada", "revocada", "inactiva"])
 def test_sse_rechaza_sesiones_invalidas_y_cabeceras_falsas(
     db: Session,
     client: TestClient,
     estado: str,
 ) -> None:
     cookies: dict[str, str] | None = None
-    if estado == "operador":
-        operador = Usuario(
-            nombre="Grace",
-            apellido_paterno="Hopper",
-            apellido_materno="Murray",
-            correo=_correo(),
-            contrasena_hash=HASH_SINTETICO,
-            rol=RolUsuario.OPERADOR.value,
-            correo_verificado=True,
-            debe_cambiar_contrasena=False,
-            esta_activo=True,
-        )
-        db.add(operador)
-        db.flush()
-        token = _crear_sesion(db, operador)
-        cookies = {NOMBRE_COOKIE: token}
-    elif estado != "sin_cookie":
+    if estado != "sin_cookie":
         admin_id, token = _crear_admin(db)
         cookies = {NOMBRE_COOKIE: token}
         sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == admin_id))
@@ -455,10 +442,12 @@ def test_sse_rechaza_sesiones_invalidas_y_cabeceras_falsas(
     assert respuesta.headers.get("cache-control") == "no-store"
 
 
+@pytest.mark.parametrize("ruta", [RUTA_EVENTOS, "/api/eventos"])
 def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
     db: Session,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
+    ruta: str,
 ) -> None:
     admin_id, token = _crear_admin(db)
 
@@ -471,7 +460,8 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
                     EventoSSE(
                         id=1,
                         tipo="operador.creado",
-                        operador_id=44,
+                        recurso_tipo="operador",
+                        recurso_id=44,
                         ocurrido_en="2026-10-04T12:00:00+00:00",
                     ),
                 ),
@@ -479,13 +469,13 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
         return ResultadoLoteEventosSSE(autorizado=False, marca=1)
 
     monkeypatch.setattr(
-        rutas_operadores,
+        rutas_eventos,
         "_consultar_lote_en_sesion",
         consultar_lote,
     )
 
     client.cookies.set(NOMBRE_COOKIE, token)
-    respuesta = client.get(RUTA_EVENTOS, headers={"Origin": "https://evil.example"})
+    respuesta = client.get(ruta, headers={"Origin": "https://evil.example"})
     client.cookies.delete(NOMBRE_COOKIE)
 
     assert respuesta.status_code == 200
@@ -495,7 +485,8 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
     assert "id: 1" in respuesta.text
     assert "event: operador.creado" in respuesta.text
     assert _datos_sse(respuesta.text) == {
-        "operador_id": 44,
+        "recurso_tipo": "operador",
+        "recurso_id": 44,
         "ocurrido_en": "2026-10-04T12:00:00+00:00",
     }
     assert "set-cookie" not in respuesta.headers
@@ -505,12 +496,68 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
 
     db.rollback()
     leases = db.scalars(
-        select(ConexionSSEAdmin).where(
-            ConexionSSEAdmin.admin_usuario_id == admin_id
-        )
+        select(ConexionSSEAdmin).where(ConexionSSEAdmin.admin_usuario_id == admin_id)
     ).all()
     assert len(leases) == 1
     assert leases[0].cerrada_en is not None
+
+
+def test_sesion_operador_no_puede_ampliar_su_politica_con_query_ni_headers(
+    db: Session,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    admin_id, _admin_token = _crear_admin(db)
+    operador = Usuario(
+        nombre="Grace",
+        apellido_paterno="Hopper",
+        apellido_materno="Murray",
+        correo=_correo(),
+        contrasena_hash=HASH_SINTETICO,
+        rol=RolUsuario.OPERADOR.value,
+        correo_verificado=True,
+        debe_cambiar_contrasena=False,
+        esta_activo=True,
+    )
+    db.add(operador)
+    db.flush()
+    registrar_evento_operador(db, operador.id, "operador.creado")
+    db.commit()
+    token = _crear_sesion(db, operador)
+    db.rollback()
+    original = rutas_eventos._consultar_lote_en_sesion
+    llamadas = 0
+
+    def consultar_una_vez(
+        *,
+        contexto: rutas_eventos.ContextoStreamTiempoReal,
+        cursor: int,
+        revalidar_sesion: bool,
+        renovar_conexion: bool,
+    ) -> ResultadoLoteEventosSSE:
+        nonlocal llamadas
+        if llamadas == 0:
+            llamadas += 1
+            return original(
+                contexto=contexto,
+                cursor=cursor,
+                revalidar_sesion=revalidar_sesion,
+                renovar_conexion=renovar_conexion,
+            )
+        return ResultadoLoteEventosSSE(autorizado=False, marca=1)
+
+    monkeypatch.setattr(rutas_eventos, "_consultar_lote_en_sesion", consultar_una_vez)
+    client.cookies.set(NOMBRE_COOKIE, token)
+    respuesta = client.get(
+        "/api/eventos?cursor_eventos=0&rol=ADMIN&topic=operador.creado",
+        headers={"X-Role": "ADMIN", "X-User-Id": "1"},
+    )
+    client.cookies.delete(NOMBRE_COOKIE)
+
+    assert respuesta.status_code == 200
+    assert "operador.creado" not in respuesta.text
+    assert str(operador.id) not in respuesta.text
+    assert llamadas == 1
 
 
 @pytest.mark.parametrize(
@@ -562,7 +609,7 @@ def test_retention_gap_emite_resync_con_solo_metadata_segura(
     db.commit()
     db.rollback()
     monkeypatch.setattr(
-        rutas_operadores,
+        rutas_eventos,
         "_consultar_lote_en_sesion",
         lambda **_kwargs: ResultadoLoteEventosSSE(autorizado=False, marca=4),
     )
@@ -578,7 +625,6 @@ def test_retention_gap_emite_resync_con_solo_metadata_segura(
     assert "id: 4" in respuesta.text
     assert "event: resync" in respuesta.text
     assert _datos_sse(respuesta.text) == {
-        "ultimo_id": 4,
         "motivo": "historial_expirado",
     }
     assert "cookie-sintetica" not in respuesta.text
@@ -615,7 +661,8 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
     evento = EventoSSE(
         id=1,
         tipo="operador.creado",
-        operador_id=44,
+        recurso_tipo="operador",
+        recurso_id=44,
         ocurrido_en="2026-10-04T12:00:00+00:00",
     )
 
@@ -628,15 +675,16 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
             )
         return ResultadoLoteEventosSSE(autorizado=False, marca=1)
 
-    monkeypatch.setattr(rutas_operadores, "SessionLocal", crear_sesion_rastreada)
-    monkeypatch.setattr(rutas_operadores, "consultar_lote_eventos_sse", consultar)
+    monkeypatch.setattr(rutas_eventos, "SessionLocal", crear_sesion_rastreada)
+    monkeypatch.setattr(rutas_eventos, "consultar_lote_eventos_usuario", consultar)
     monkeypatch.setattr(
-        rutas_operadores,
+        rutas_eventos,
         "_cerrar_lease_en_sesion",
         lambda contexto: limpiezas.append(contexto.lease_id),
     )
-    contexto = rutas_operadores.ContextoStreamOperadores(
-        admin_usuario_id=admin_id,
+    contexto = rutas_eventos.ContextoStreamTiempoReal(
+        usuario_id=admin_id,
+        rol_usuario="ADMIN",
         token_sesion=token,
         lease_id=lease_id,
         cursor=0,
@@ -645,7 +693,7 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
     )
 
     async def recibir_y_cerrar() -> ServerSentEvent:
-        generador = rutas_operadores._generar_eventos_operadores(contexto)
+        generador = rutas_eventos._generar_eventos_tiempo_real(contexto)
         recibido = await anext(generador)
         assert sesiones
         assert sesiones[0].cerrada_para_prueba is True
@@ -658,7 +706,8 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
     assert recibido.event == "operador.creado"
     assert recibido.id == "1"
     assert recibido.data == {
-        "operador_id": 44,
+        "recurso_tipo": "operador",
+        "recurso_id": 44,
         "ocurrido_en": "2026-10-04T12:00:00+00:00",
     }
     assert limpiezas == [lease_id]

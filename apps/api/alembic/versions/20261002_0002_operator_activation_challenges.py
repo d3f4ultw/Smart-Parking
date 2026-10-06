@@ -70,17 +70,19 @@ def downgrade() -> None:
         sa.column("desafio_expira_en", sa.DateTime(timezone=True)),
     )
     tiene_contrasenas_nulas = conexion.scalar(
-        sa.select(sa.func.count()).select_from(usuarios).where(
-            usuarios.c.contrasena_hash.is_(None)
-        )
+        sa.select(sa.func.count())
+        .select_from(usuarios)
+        .where(usuarios.c.contrasena_hash.is_(None))
     )
     tiene_codigos_nulos = conexion.scalar(
-        sa.select(sa.func.count()).select_from(activaciones).where(
-            activaciones.c.codigo_hash.is_(None)
-        )
+        sa.select(sa.func.count())
+        .select_from(activaciones)
+        .where(activaciones.c.codigo_hash.is_(None))
     )
     tiene_desafios = conexion.scalar(
-        sa.select(sa.func.count()).select_from(activaciones).where(
+        sa.select(sa.func.count())
+        .select_from(activaciones)
+        .where(
             sa.or_(
                 activaciones.c.desafio_hash.is_not(None),
                 activaciones.c.desafio_expira_en.is_not(None),

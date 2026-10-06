@@ -142,10 +142,32 @@ def _crear_dto(usuario: Usuario) -> OperadorDTO:
     )
 
 
-def listar_operadores(db: Session, pagina: int) -> ResultadoListaOperadores:
+def _escapar_comodines_busqueda(texto: str) -> str:
+    """Conserva como literales los comodines escritos en la búsqueda."""
+
+    return texto.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def listar_operadores(
+    db: Session,
+    pagina: int,
+    buscar: str | None = None,
+) -> ResultadoListaOperadores:
     """Lista una pagina de OPERADOR con orden y conteo consistentes."""
 
     filtro_operadores = Usuario.rol == RolUsuario.OPERADOR.value
+    consulta = (buscar or "").strip()
+    if consulta:
+        patron = "%" + _escapar_comodines_busqueda(consulta) + "%"
+        nombre_correo = func.concat_ws(
+            " ",
+            func.nullif(Usuario.nombre, ""),
+            func.nullif(Usuario.apellido_paterno, ""),
+            func.nullif(Usuario.apellido_materno, ""),
+            Usuario.correo,
+        )
+        filtro_operadores &= nombre_correo.ilike(patron, escape="\\")
+
     total = (
         db.scalar(select(func.count()).select_from(Usuario).where(filtro_operadores))
         or 0
@@ -173,10 +195,12 @@ def obtener_operador(db: Session, operador_id: int) -> OperadorDTO:
     """Obtiene un OPERADOR por id sin exponer campos internos."""
 
     usuario = db.scalar(
-        select(Usuario).where(
+        select(Usuario)
+        .where(
             Usuario.id == operador_id,
             Usuario.rol == RolUsuario.OPERADOR.value,
-        ).options(selectinload(Usuario.creado_por))
+        )
+        .options(selectinload(Usuario.creado_por))
     )
     if usuario is None:
         raise OperadorNoEncontradoError

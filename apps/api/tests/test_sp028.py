@@ -401,6 +401,141 @@ def test_admin_lista_operadores_pagina_diez_elementos_y_limpia_pagina_fuera_de_r
     assert "contrasena_hash" not in primera.text
 
 
+def test_admin_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
+    db: Session,
+    client: TestClient,
+) -> None:
+    token = crear_admin_autenticado(db)
+    hash_operador = crear_hash_contrasena(CONTRASENA_OPERADOR)
+    operadores_base = [
+        Usuario(
+            nombre=f"Base {indice:02d}",
+            apellido_paterno="Externo",
+            apellido_materno=None,
+            correo=correo_de_prueba(),
+            contrasena_hash=hash_operador,
+            rol=RolUsuario.OPERADOR.value,
+        )
+        for indice in range(10)
+    ]
+    operadores_coincidentes = [
+        Usuario(
+            nombre=(
+                "Elena Coincidencia 00" if indice == 0 else f"Coincidencia {indice:02d}"
+            ),
+            apellido_paterno=(
+                "PaternoEspecial" if indice == 0 else f"Apellido {indice:02d}"
+            ),
+            apellido_materno=(
+                "MaternoEspecial" if indice == 0 else f"Segundo {indice:02d}"
+            ),
+            correo=(
+                "correo-especial@example.com" if indice == 0 else correo_de_prueba()
+            ),
+            contrasena_hash=hash_operador,
+            rol=RolUsuario.OPERADOR.value,
+        )
+        for indice in range(11)
+    ]
+    db.add_all(operadores_base + operadores_coincidentes)
+    db.commit()
+    ids_coincidentes = sorted(operador.id for operador in operadores_coincidentes)
+    id_especial = operadores_coincidentes[0].id
+    db.rollback()
+
+    primera_sin_filtro = solicitar_con_cookie(
+        client,
+        "GET",
+        RUTA_OPERADORES,
+        token=token,
+    )
+    primera = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=COINCIDENCIA",
+        token=token,
+    )
+    segunda = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=coincidencia&pagina=2",
+        token=token,
+    )
+    fuera_de_rango = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=coincidencia&pagina=99",
+        token=token,
+    )
+
+    assert primera_sin_filtro.status_code == 200
+    assert all(
+        fila["id"] not in ids_coincidentes
+        for fila in primera_sin_filtro.json()["operadores"]
+    )
+    assert all(
+        respuesta.status_code == 200 for respuesta in (primera, segunda, fuera_de_rango)
+    )
+    assert [fila["id"] for fila in primera.json()["operadores"]] == (
+        ids_coincidentes[:10]
+    )
+    assert [fila["id"] for fila in segunda.json()["operadores"]] == (
+        ids_coincidentes[10:]
+    )
+    assert fuera_de_rango.json()["operadores"] == segunda.json()["operadores"]
+    assert {
+        clave: primera.json()[clave]
+        for clave in ("pagina", "tamano_pagina", "total", "total_paginas")
+    } == {"pagina": 1, "tamano_pagina": 10, "total": 11, "total_paginas": 2}
+    assert segunda.json()["pagina"] == fuera_de_rango.json()["pagina"] == 2
+    assert primera.headers["cache-control"] == "no-store"
+
+    for consulta in (
+        "Elena Coincidencia 00 PaternoEspecial",
+        "PaternoEspecial",
+        "MaternoEspecial",
+        "correo-especial@example.com",
+    ):
+        respuesta = solicitar_con_cookie(
+            client,
+            "GET",
+            f"{RUTA_OPERADORES}?buscar={consulta.replace(' ', '%20')}",
+            token=token,
+        )
+        assert respuesta.status_code == 200
+        assert [fila["id"] for fila in respuesta.json()["operadores"]] == [id_especial]
+        assert respuesta.json()["total"] == respuesta.json()["total_paginas"] == 1
+
+    espacios = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=%20%20",
+        token=token,
+    )
+    sin_busqueda = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=",
+        token=token,
+    )
+    admin_no_incluido = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar=Katherine",
+        token=token,
+    )
+    consulta_excesiva = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}?buscar={'a' * 321}",
+        token=token,
+    )
+    assert espacios.json()["total"] == sin_busqueda.json()["total"] == 21
+    assert espacios.json()["total_paginas"] == sin_busqueda.json()["total_paginas"] == 3
+    assert admin_no_incluido.json()["total"] == 0
+    assert consulta_excesiva.status_code == 422
+
+
 def test_admin_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
     db: Session,
     client: TestClient,

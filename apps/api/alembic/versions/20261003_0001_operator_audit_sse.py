@@ -113,10 +113,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     conexion = op.get_bind()
     existe_atribucion = conexion.execute(
-        text(
-            "SELECT 1 FROM usuarios "
-            "WHERE creado_por_usuario_id IS NOT NULL LIMIT 1"
-        )
+        text("SELECT 1 FROM usuarios WHERE creado_por_usuario_id IS NOT NULL LIMIT 1")
     ).first()
     if existe_atribucion is not None:
         raise RuntimeError(

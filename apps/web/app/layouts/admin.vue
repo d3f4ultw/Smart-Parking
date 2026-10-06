@@ -1,11 +1,23 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import {
+  crearControladorEventosTiempoReal,
+  proveerEventosTiempoReal,
+} from '~/utils/eventos-tiempo-real'
 import { mapearErrorLogout } from '~/utils/logout'
 
 const route = useRoute()
 const { usuario, limpiarSesion } = useSesion()
 const { cerrarSesion } = useLogout()
+const eventosTiempoReal = crearControladorEventosTiempoReal({
+  alPerderSesion: async () => {
+    limpiarSesion()
+    clearNuxtData()
+    await navigateTo('/login', { replace: true })
+  },
+})
+proveerEventosTiempoReal(eventosTiempoReal)
 
 useHead({
   link: [
@@ -69,6 +81,7 @@ async function enviarLogout() {
     return
   }
 
+  eventosTiempoReal.detener()
   limpiarSesion()
   await navigateTo('/login', { replace: true })
 }
@@ -117,8 +130,14 @@ watch(mobileMenuOpen, async (abierto) => {
   }
 })
 
-onMounted(() => window.addEventListener('keydown', manejarTeclado))
-onBeforeUnmount(() => window.removeEventListener('keydown', manejarTeclado))
+onMounted(() => {
+  window.addEventListener('keydown', manejarTeclado)
+  eventosTiempoReal.iniciar()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', manejarTeclado)
+  eventosTiempoReal.detener()
+})
 </script>
 
 <template>

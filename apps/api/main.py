@@ -15,9 +15,11 @@ from app.api.rutas import (
     activaciones_operador_router,
     activaciones_router,
     autenticacion_router,
+    eventos_tiempo_real_router,
     operadores_router,
     reenvio_activacion_router,
 )
+from app.api.rutas.eventos import cerrar_leases_sse_activas
 from app.core.config import get_settings
 from app.core.database import engine
 from app.correo.smtp import cargar_configuracion_smtp
@@ -31,12 +33,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     if settings.correo_transporte == "smtp":
         cargar_configuracion_smtp(settings)
-    yield
+    try:
+        yield
+    finally:
+        await cerrar_leases_sse_activas()
 
 
 app = FastAPI(title="Smart Parking API", lifespan=lifespan)
 app.state.database_engine = engine
 app.include_router(autenticacion_router)
+app.include_router(eventos_tiempo_real_router)
 app.include_router(operadores_router)
 app.include_router(activaciones_operador_router)
 app.include_router(activaciones_router)
@@ -56,12 +62,16 @@ RUTAS_ACTIVACION_OPERADOR = frozenset(
         f"{RUTA_ACTIVACION_OPERADOR}/completar",
     }
 )
-RUTAS_SIN_CACHE = RUTAS_ACTIVACION | RUTAS_ACTIVACION_OPERADOR | {
-    RUTA_CREAR_OPERADOR,
-    RUTA_LOGIN,
-    RUTA_LOGOUT,
-    RUTA_ME,
-}
+RUTAS_SIN_CACHE = (
+    RUTAS_ACTIVACION
+    | RUTAS_ACTIVACION_OPERADOR
+    | {
+        RUTA_CREAR_OPERADOR,
+        RUTA_LOGIN,
+        RUTA_LOGOUT,
+        RUTA_ME,
+    }
+)
 
 
 @app.middleware("http")
