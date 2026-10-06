@@ -17,11 +17,11 @@ import {
   type RespuestaAccionOperador,
   type RespuestaListaOperadores,
 } from '../app/utils/gestion-operadores.ts'
+import { crearDebounceBusquedaOperadores } from '../app/utils/busqueda-operadores.ts'
 import {
   compararCursoresEventos,
   crearRegistroCreacionesOperador,
   crearReconciliadorOperadores,
-  crearStreamOperadores,
   puedeInsertarCreacionEnPagina,
 } from '../app/utils/operadores-tiempo-real.ts'
 
@@ -121,6 +121,24 @@ test('normaliza la pagina de la URL y limita el resultado al total disponible', 
   assert.equal(normalizarPaginaOperadores(4, 3), 3)
   assert.equal(normalizarPaginaOperadores(2, 0), 1)
   assert.equal(normalizarPaginaOperadores(0, 5), 1)
+})
+
+test('el debounce agrupa la escritura y confirma solo el texto más reciente', async () => {
+  const consultas: string[] = []
+  const debounce = crearDebounceBusquedaOperadores((consulta) => {
+    consultas.push(consulta)
+  }, 40)
+
+  debounce.programar('fer')
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  debounce.programar('ferna')
+  await new Promise((resolve) => setTimeout(resolve, 60))
+  assert.deepEqual(consultas, ['ferna'])
+
+  debounce.programar('consulta cancelada')
+  debounce.cancelar()
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.deepEqual(consultas, ['ferna'])
 })
 
 test('muestra estados de cuenta y controla acciones segun el estado', () => {
@@ -295,171 +313,6 @@ test('reconciliaciones de ids distintos avanzan independientemente', async () =>
   reconciliador.detener()
 })
 
-class FuenteEventosFalsa {
-  readyState = 0
-  onopen: ((this: EventSource, evento: Event) => unknown) | null = null
-  onerror: ((this: EventSource, evento: Event) => unknown) | null = null
-  readonly listeners = new Map<string, EventListener[]>()
-  readonly url: string
-  cierres = 0
-
-  constructor(url: string) {
-    this.url = url
-  }
-
-  addEventListener(tipo: string, listener: EventListenerOrEventListenerObject) {
-    const callback: EventListener = typeof listener === 'function'
-      ? listener
-      : (evento) => listener.handleEvent(evento)
-    const listeners = this.listeners.get(tipo) ?? []
-    listeners.push(callback)
-    this.listeners.set(tipo, listeners)
-  }
-
-  close() {
-    this.cierres += 1
-    this.readyState = 2
-  }
-
-  abrir() {
-    this.readyState = 1
-    this.onopen?.call(this as unknown as EventSource, new Event('open'))
-  }
-
-  fallar(estado: number) {
-    this.readyState = estado
-    this.onerror?.call(this as unknown as EventSource, new Event('error'))
-  }
-
-  emitir(tipo: string, data: string, lastEventId: string) {
-    const evento = new MessageEvent<string>(tipo, { data, lastEventId })
-    for (const listener of this.listeners.get(tipo) ?? []) {
-      listener(evento)
-    }
-  }
-}
-
-type TemporizadorPrueba = {
-  callback: () => void
-  demora: number
-  cancelado: boolean
-}
-
-test('un stream por pagina, cursor inicial, reconexion nativa y 401 terminal', async () => {
-  const fuentes: FuenteEventosFalsa[] = []
-  const temporizadores: TemporizadorPrueba[] = []
-  const actualizaciones: number[] = []
-  const creaciones: number[] = []
-  const estados: string[] = []
-  let resyncs = 0
-  let comprobaciones = 0
-  const sesiones: number[] = [200, 401]
-  let sesionesPerdidas = 0
-  const stream = crearStreamOperadores({
-    cursorInicial: '0',
-    crearFuente: (url) => {
-      const fuente = new FuenteEventosFalsa(url)
-      fuentes.push(fuente)
-      return fuente as unknown as EventSource
-    },
-    comprobarSesion: async () => {
-      comprobaciones += 1
-      return sesiones.shift() ?? 200
-    },
-    alRecibirActualizacion: (id) => actualizaciones.push(id),
-    alRecibirCreacion: (id) => creaciones.push(id),
-    alRecibirResync: () => {
-      resyncs += 1
-    },
-    alCambiarEstado: (estado) => estados.push(estado),
-    alPerderSesion: () => {
-      sesionesPerdidas += 1
-    },
-    programar: (callback, demora) => {
-      const temporizador = { callback, demora, cancelado: false }
-      temporizadores.push(temporizador)
-      return temporizador as unknown as ReturnType<typeof setTimeout>
-    },
-    cancelar: (id) => {
-      const temporizador = id as unknown as TemporizadorPrueba
-      temporizador.cancelado = true
-    },
-  })
-
-  stream.iniciar()
-  stream.iniciar()
-  assert.equal(fuentes.length, 1)
-  assert.equal(fuentes[0]?.url, '/api/admin/operadores/eventos?cursor_eventos=0')
-  fuentes[0]!.abrir()
-  fuentes[0]!.emitir('operador.actualizado', '{"operador_id":7}', '1')
-  fuentes[0]!.emitir('operador.creado', '{"operador_id":8}', '2')
-  fuentes[0]!.emitir('resync', '{}', '3')
-  fuentes[0]!.emitir('operador.creado', '{"operador_id":8}', '2')
-  assert.deepEqual(actualizaciones, [7])
-  assert.deepEqual(creaciones, [8])
-  assert.equal(resyncs, 1)
-
-  fuentes[0]!.fallar(0)
-  await new Promise((resolver) => setTimeout(resolver, 0))
-  assert.equal(comprobaciones, 0)
-  assert.equal(fuentes.length, 1)
-
-  fuentes[0]!.fallar(2)
-  await new Promise((resolver) => setTimeout(resolver, 0))
-  assert.equal(comprobaciones, 1)
-  assert.equal(temporizadores[0]?.demora, 1000)
-  assert.equal(sesionesPerdidas, 0)
-  temporizadores[0]!.callback()
-  assert.equal(fuentes.length, 2)
-  assert.equal(fuentes[1]?.url, '/api/admin/operadores/eventos?cursor_eventos=3')
-
-  fuentes[1]!.fallar(2)
-  await new Promise((resolver) => setTimeout(resolver, 0))
-  fuentes[1]!.fallar(2)
-  await new Promise((resolver) => setTimeout(resolver, 0))
-  assert.equal(comprobaciones, 2)
-  assert.equal(sesionesPerdidas, 1)
-  assert.equal(estados.at(-1), 'sesion-perdida')
-  assert.equal(temporizadores.length, 1)
-})
-
-test('429, 5xx y fallo de red en /me no cierran sesion y reintentan con limite', async () => {
-  for (const estadoSesion of [0, 429, 503]) {
-    const fuentes: FuenteEventosFalsa[] = []
-    const temporizadores: TemporizadorPrueba[] = []
-    let sesionesPerdidas = 0
-    const stream = crearStreamOperadores({
-      cursorInicial: '41',
-      crearFuente: (url) => {
-        const fuente = new FuenteEventosFalsa(url)
-        fuentes.push(fuente)
-        return fuente as unknown as EventSource
-      },
-      comprobarSesion: async () => estadoSesion,
-      alRecibirActualizacion: () => {},
-      alRecibirCreacion: () => {},
-      alRecibirResync: () => {},
-      alCambiarEstado: () => {},
-      alPerderSesion: () => {
-        sesionesPerdidas += 1
-      },
-      programar: (callback, demora) => {
-        const temporizador = { callback, demora, cancelado: false }
-        temporizadores.push(temporizador)
-        return temporizador as unknown as ReturnType<typeof setTimeout>
-      },
-      cancelar: () => {},
-    })
-    stream.iniciar()
-    fuentes[0]!.fallar(2)
-    await new Promise((resolver) => setTimeout(resolver, 0))
-    assert.equal(sesionesPerdidas, 0, `HTTP ${estadoSesion} must not sign out ADMIN`)
-    assert.equal(temporizadores.length, 1, `HTTP ${estadoSesion} schedules one retry`)
-    assert.equal(temporizadores[0]?.demora, 1000)
-    stream.detener()
-  }
-})
-
 test('la pagina conserva SSR, seis columnas, reconcilia por fila y reserva refresh para resync', () => {
   const page = readFileSync(
     join(WEB_ROOT, 'app', 'pages', 'admin', 'operadores', 'index.vue'),
@@ -470,8 +323,9 @@ test('la pagina conserva SSR, seis columnas, reconcilia por fila y reserva refre
     'utf8',
   )
   assert.match(page, /await useAsyncData<RespuestaListaOperadores>/)
-  assert.match(page, /onMounted\(\(\) => stream\.iniciar\(\)\)/)
-  assert.match(page, /cursorInicial: data\.value\.cursor_eventos/)
+  assert.match(page, /eventosTiempoReal\.suscribir\(/)
+  assert.match(page, /data\.value\.cursor_eventos/)
+  assert.doesNotMatch(page, /new EventSource|crearStreamOperadores/)
   assert.doesNotMatch(page, /Actualizar lista/)
   assert.equal((page.match(/<th scope="col">/g) ?? []).length, 6)
   assert.match(page, /Creado por/)
@@ -479,10 +333,46 @@ test('la pagina conserva SSR, seis columnas, reconcilia por fila y reserva refre
   assert.match(page, /fila\.operador\.creado_por/)
   assert.match(page, /fila\.operador\.creado_en/)
   assert.match(page, /COLUMNAS_SKELETON = \[1, 2, 3, 4, 5, 6\]/)
-  assert.match(page, /busqueda\.value\.trim\(\)\.length === 0 && filtroEstado\.value === 'todos'/)
+  assert.match(
+    page,
+    /busqueda\.value\.trim\(\)\.length === 0[\s\S]*buscarServidor\.value\.length === 0[\s\S]*filtroEstado\.value === 'todos'/,
+  )
   assert.equal((page.match(/listarOperadores\(/g) ?? []).length, 1)
   assert.equal((page.match(/await refresh\(\)/g) ?? []).length, 1)
   assert.doesNotMatch(modal, /notificarActualizacion|emit\('updated'\)/)
   assert.match(modal, /emit\('operator-state-changed', operadorId\)/)
   assert.match(modal, /emit\('action-busy', operadorId, true\)/)
+})
+
+test('la busqueda global se carga desde el servidor y reinicia la pagina', () => {
+  const page = readFileSync(
+    join(WEB_ROOT, 'app', 'pages', 'admin', 'operadores', 'index.vue'),
+    'utf8',
+  )
+  const composable = readFileSync(
+    join(WEB_ROOT, 'app', 'composables', 'useOperadores.ts'),
+    'utf8',
+  )
+  const bff = readFileSync(
+    join(WEB_ROOT, 'server', 'api', 'admin', 'operadores.get.ts'),
+    'utf8',
+  )
+  const proxy = readFileSync(
+    join(WEB_ROOT, 'server', 'utils', 'proxy-admin-operadores.ts'),
+    'utf8',
+  )
+
+  assert.match(page, /await useAsyncData<RespuestaListaOperadores>/)
+  assert.match(page, /watch: \[paginaSolicitada, buscarServidor\]/)
+  assert.match(page, /listarOperadores\(pagina, signal, buscar \|\| undefined\)/)
+  assert.match(page, /function aplicarBusquedaEfectiva/)
+  assert.match(page, /paginaForzadaBusqueda\.value = true/)
+  assert.match(page, /debounceBusqueda\.cancelar\(\)[\s\S]*aplicarBusquedaEfectiva\(''\)/)
+  assert.doesNotMatch(page, /toLocaleLowerCase\('es-MX'\)\.includes/)
+  assert.match(composable, /signal/)
+  assert.match(composable, /\.\.\.\(buscar \? \{ buscar \} : \{\}\)/)
+  assert.match(bff, /parametros\.get\('buscar'\)/)
+  assert.match(proxy, /parametros\.set\('buscar', buscar\)/)
+  assert.match(page, /Página \{\{ paginaMostrada \}\} de \{\{ Math\.max\(data\.total_paginas, 1\) \}\}/)
+  assert.match(page, /:disabled="pending \|\| paginaActual >= data\.total_paginas"/)
 })

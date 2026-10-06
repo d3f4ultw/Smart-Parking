@@ -13,10 +13,14 @@ import type {
 export function useOperadores() {
   const fetchConCookies = useRequestFetch()
 
-  function listarOperadores(pagina = 1) {
+  function listarOperadores(pagina = 1, signal?: AbortSignal, buscar?: string) {
     return fetchConCookies<RespuestaListaOperadores>('/api/admin/operadores', {
       credentials: 'same-origin',
-      query: { pagina },
+      query: {
+        pagina,
+        ...(buscar ? { buscar } : {}),
+      },
+      signal,
     })
   }
 

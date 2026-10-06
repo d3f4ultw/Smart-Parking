@@ -31,10 +31,13 @@ from app.servicios.eventos_operadores import (
     MAXIMO_EVENTOS_POR_LECTURA,
     MAXIMO_EVENTOS_RETENIDOS,
     LimiteConexionesSSEError,
+    admitir_conexion_sse,
     admitir_conexion_sse_admin,
     cerrar_conexion_sse_admin,
     consultar_lote_eventos_sse,
+    consultar_lote_eventos_usuario,
     registrar_evento_operador,
+    tipos_autorizados_para_rol,
 )
 from app.servicios.operadores import (
     OperadorYaActivoError,
@@ -113,6 +116,115 @@ def _cantidad_eventos(db: Session, operador_id: int) -> int:
     return cantidad
 
 
+def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
+    db: Session,
+) -> None:
+    admin_id, token_admin = _crear_admin(db)
+    operador = _crear_operador(db)
+    token_operador = f"token-operador-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=operador.id,
+            token_hash=hash_token_sesion(token_operador),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    evento = registrar_evento_operador(db, operador.id, "operador.creado")
+    db.commit()
+
+    lease_operador = admitir_conexion_sse(
+        db,
+        usuario_id=operador.id,
+        token_sesion=token_operador,
+    )
+    lote_operador = consultar_lote_eventos_usuario(
+        db,
+        usuario_id=operador.id,
+        rol_usuario="OPERADOR",
+        token_sesion=token_operador,
+        lease_id=lease_operador,
+        cursor=0,
+        revalidar_sesion=True,
+        renovar_conexion=True,
+    )
+    assert lote_operador.autorizado is True
+    assert lote_operador.eventos == ()
+    assert lote_operador.cursor_escaneado == evento.id
+
+    lease_admin = admitir_conexion_sse(
+        db,
+        usuario_id=admin_id,
+        token_sesion=token_admin,
+    )
+    lote_admin = consultar_lote_eventos_usuario(
+        db,
+        usuario_id=admin_id,
+        rol_usuario="ADMIN",
+        token_sesion=token_admin,
+        lease_id=lease_admin,
+        cursor=0,
+        revalidar_sesion=True,
+        renovar_conexion=True,
+    )
+    assert [fila.id for fila in lote_admin.eventos] == [evento.id]
+    assert tipos_autorizados_para_rol("OPERADOR") == frozenset()
+    assert tipos_autorizados_para_rol("ROL_FALSO") == frozenset()
+    assert tipos_autorizados_para_rol("ADMIN") == {
+        "operador.creado",
+        "operador.actualizado",
+    }
+
+
+def test_limite_de_seis_es_independiente_por_cuenta_y_rol(db: Session) -> None:
+    admin_id, token_admin = _crear_admin(db)
+    operador = _crear_operador(db)
+    token_operador = f"token-operador-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=operador.id,
+            token_hash=hash_token_sesion(token_operador),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    ahora = datetime.now(UTC)
+
+    leases_admin = [
+        admitir_conexion_sse(
+            db,
+            usuario_id=admin_id,
+            token_sesion=token_admin,
+            ahora=ahora,
+        )
+        for _ in range(6)
+    ]
+    leases_operador = [
+        admitir_conexion_sse(
+            db,
+            usuario_id=operador.id,
+            token_sesion=token_operador,
+            ahora=ahora,
+        )
+        for _ in range(6)
+    ]
+
+    assert len(leases_admin) == len(leases_operador) == 6
+    with pytest.raises(LimiteConexionesSSEError):
+        admitir_conexion_sse(
+            db,
+            usuario_id=admin_id,
+            token_sesion=token_admin,
+            ahora=ahora,
+        )
+    with pytest.raises(LimiteConexionesSSEError):
+        admitir_conexion_sse(
+            db,
+            usuario_id=operador.id,
+            token_sesion=token_operador,
+            ahora=ahora,
+        )
+
+
 def test_evento_y_contador_se_revierten_juntos(db: Session) -> None:
     operador = _crear_operador(db)
 
@@ -160,9 +272,7 @@ def test_event_ids_wait_for_the_prior_transaction_commit(db: Session) -> None:
                 expire_on_commit=False,
             ) as otra_db:
                 with otra_db.begin():
-                    pid_segundo.append(
-                        otra_db.scalar(text("SELECT pg_backend_pid()"))
-                    )
+                    pid_segundo.append(otra_db.scalar(text("SELECT pg_backend_pid()")))
                     segundo_inicio.set()
                     evento = registrar_evento_operador(
                         otra_db,
@@ -188,8 +298,7 @@ def test_event_ids_wait_for_the_prior_transaction_commit(db: Session) -> None:
             with motor.connect() as conexion:
                 estado_espera = conexion.scalar(
                     text(
-                        "SELECT wait_event_type FROM pg_stat_activity "
-                        "WHERE pid = :pid"
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid"
                     ),
                     {"pid": pid_segundo[0]},
                 )
@@ -316,7 +425,8 @@ def test_retencion_expira_por_fecha_y_limita_a_diez_mil(db: Session) -> None:
     eventos = [
         {
             "id": identificador,
-            "operador_id": operador.id,
+            "recurso_tipo": "operador",
+            "recurso_id": operador.id,
             "tipo": "operador.actualizado",
             "ocurrido_en": ahora - timedelta(days=31 if identificador == 1 else 1),
         }
@@ -333,9 +443,7 @@ def test_retencion_expira_por_fecha_y_limita_a_diez_mil(db: Session) -> None:
         assert nuevo.id == MAXIMO_EVENTOS_RETENIDOS + 2
 
     db.rollback()
-    ids = db.scalars(
-        select(EventoOperador.id).order_by(EventoOperador.id)
-    ).all()
+    ids = db.scalars(select(EventoOperador.id).order_by(EventoOperador.id)).all()
     assert len(ids) == MAXIMO_EVENTOS_RETENIDOS
     assert ids[0] == 3
     assert ids[-1] == MAXIMO_EVENTOS_RETENIDOS + 2
@@ -353,7 +461,7 @@ def test_limites_de_streams_aperturas_renovacion_y_limpieza(db: Session) -> None
             token_sesion=token,
             ahora=ahora + timedelta(seconds=indice),
         )
-        for indice in range(3)
+        for indice in range(6)
     ]
     with pytest.raises(LimiteConexionesSSEError) as error:
         admitir_conexion_sse_admin(
@@ -519,12 +627,12 @@ def test_sesion_o_cuenta_invalida_cierra_la_conexion_en_la_revalidacion(
     assert lease.cerrada_en is not None
 
 
-def test_admission_concurrente_respeta_el_limite_de_tres_streams(
+def test_admission_concurrente_respeta_el_limite_de_seis_streams(
     db: Session,
 ) -> None:
     admin_id, token = _crear_admin(db)
     ahora = datetime.now(UTC)
-    for indice in range(2):
+    for indice in range(5):
         admitir_conexion_sse_admin(
             db,
             admin_usuario_id=admin_id,
@@ -580,7 +688,7 @@ def test_admission_concurrente_respeta_el_limite_de_tres_streams(
                 ConexionSSEAdmin.expira_en > ahora,
             )
         )
-        == 3
+        == 6
     )
 
 
