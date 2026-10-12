@@ -7,6 +7,7 @@ import sys
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.cli import configuracion_estacionamiento
 from app.cli.invitaciones_admin import crear_callback_entrega_admin
 from app.cli.presentacion import (
     ANSI_AMARILLO,
@@ -195,8 +196,9 @@ def _mostrar_tabla_administradores(
 
 
 def _mostrar_menu() -> None:
-    print(_estilizar("SMART PARKING — GESTIÓN DE ADMINISTRADORES", ANSI_CIAN_BRILLANTE))
-    print("1. Ver administradores")
+    print(_estilizar("SMART PARKING — ADMINISTRACIÓN LOCAL", ANSI_CIAN_BRILLANTE))
+    print("1. Gestión de administradores")
+    print("2. Configuración del estacionamiento")
     print(_estilizar("0. Salir", ANSI_DIM))
 
 
@@ -465,6 +467,10 @@ def main(
                     transporte=transporte,
                     settings=settings_efectivos,
                 )
+            elif opcion == "2":
+                resultado = configuracion_estacionamiento.main(db=sesion)
+                if resultado != 0:
+                    return resultado
             else:
                 print(_estilizar("Opcion no valida.", ANSI_ROJO), file=sys.stderr)
     except KeyboardInterrupt, EOFError:

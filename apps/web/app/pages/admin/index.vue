@@ -23,6 +23,10 @@ const nombreAdmin = computed(() => {
 
   return nombreCompleto || usuario.value.correo
 })
+const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Propietario' : 'Administrador')
+const tituloCuenta = computed(() => usuario.value?.rol === 'OWNER'
+  ? 'Cuenta del propietario'
+  : 'Cuenta de administrador')
 </script>
 
 <template>
@@ -59,7 +63,7 @@ const nombreAdmin = computed(() => {
       <div class="section-heading">
         <div>
           <p class="eyebrow">Sesión activa</p>
-          <h2 id="account-title">Cuenta de administrador</h2>
+          <h2 id="account-title">{{ tituloCuenta }}</h2>
         </div>
       </div>
       <dl class="account-details">
@@ -73,7 +77,7 @@ const nombreAdmin = computed(() => {
         </div>
         <div>
           <dt>Rol</dt>
-          <dd>Administrador</dd>
+          <dd>{{ etiquetaRol }}</dd>
         </div>
       </dl>
     </section>

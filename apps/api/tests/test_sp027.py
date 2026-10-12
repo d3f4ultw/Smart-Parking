@@ -109,7 +109,10 @@ def client(database_url: URL) -> Generator[TestClient]:
         test_engine.dispose()
 
 
-@pytest.mark.parametrize("rol", list(RolUsuario))
+@pytest.mark.parametrize(
+    "rol",
+    [RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.OWNER],
+)
 def test_login_y_me_devuelven_el_rol_persistido(
     db: Session,
     client: TestClient,
@@ -174,7 +177,10 @@ def test_login_no_acepta_que_el_cliente_asigne_el_rol(
     assert db.scalar(select(func.count()).select_from(Sesion)) == 0
 
 
-@pytest.mark.parametrize("rol", list(RolUsuario))
+@pytest.mark.parametrize(
+    "rol",
+    [RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.OWNER],
+)
 def test_logout_revoca_la_sesion_de_cualquier_rol(
     db: Session,
     client: TestClient,

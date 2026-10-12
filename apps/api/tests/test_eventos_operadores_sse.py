@@ -36,6 +36,7 @@ from app.servicios.eventos_operadores import (
     cerrar_conexion_sse_admin,
     consultar_lote_eventos_sse,
     consultar_lote_eventos_usuario,
+    registrar_evento_cajon,
     registrar_evento_operador,
     tipos_autorizados_para_rol,
 )
@@ -82,6 +83,33 @@ def _crear_admin(db: Session) -> tuple[int, str]:
     db.commit()
     db.rollback()
     return admin_id, token
+
+
+def _crear_owner(db: Session) -> tuple[int, str]:
+    owner = Usuario(
+        nombre="Owner",
+        apellido_paterno="Prueba",
+        correo=_correo(),
+        contrasena_hash=HASH_SINTETICO,
+        rol=RolUsuario.OWNER.value,
+        correo_verificado=True,
+        debe_cambiar_contrasena=False,
+        esta_activo=True,
+    )
+    db.add(owner)
+    db.flush()
+    token = f"token-owner-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=owner.id,
+            token_hash=hash_token_sesion(token),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    owner_id = owner.id
+    db.commit()
+    db.rollback()
+    return owner_id, token
 
 
 def _crear_operador(db: Session, *, pendiente: bool = False) -> Usuario:
@@ -131,7 +159,22 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
     )
     evento = registrar_evento_operador(db, operador.id, "operador.creado")
     db.commit()
-
+    evento_cajon = registrar_evento_cajon(
+        db,
+        1,
+        {
+            "cajon_id": 1,
+            "numero": 1,
+            "estado_fisico": "OCUPADO",
+            "estado_operativo": "DISPONIBLE",
+            "motivo_operativo": None,
+            "estado_efectivo": "OCUPADO",
+            "estado_fisico_actualizado_en": "2026-10-06T12:00:00+00:00",
+            "estado_operativo_actualizado_en": "2026-10-06T12:00:00+00:00",
+            "actualizado_en": "2026-10-06T12:00:00+00:00",
+        },
+    )
+    db.commit()
     lease_operador = admitir_conexion_sse(
         db,
         usuario_id=operador.id,
@@ -148,8 +191,10 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
         renovar_conexion=True,
     )
     assert lote_operador.autorizado is True
-    assert lote_operador.eventos == ()
-    assert lote_operador.cursor_escaneado == evento.id
+    assert [fila.id for fila in lote_operador.eventos] == [evento_cajon.id]
+    assert lote_operador.eventos[0].datos is not None
+    assert lote_operador.eventos[0].datos["cajon_id"] == 1
+    assert lote_operador.cursor_escaneado == evento_cajon.id
 
     lease_admin = admitir_conexion_sse(
         db,
@@ -166,12 +211,38 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
         revalidar_sesion=True,
         renovar_conexion=True,
     )
-    assert [fila.id for fila in lote_admin.eventos] == [evento.id]
-    assert tipos_autorizados_para_rol("OPERADOR") == frozenset()
+    assert [fila.id for fila in lote_admin.eventos] == [evento.id, evento_cajon.id]
+    assert tipos_autorizados_para_rol("OPERADOR") == {"cajon.actualizado"}
     assert tipos_autorizados_para_rol("ROL_FALSO") == frozenset()
     assert tipos_autorizados_para_rol("ADMIN") == {
         "operador.creado",
         "operador.actualizado",
+        "cajon.actualizado",
+    }
+    owner_id, token_owner = _crear_owner(db)
+    lease_owner = admitir_conexion_sse(
+        db,
+        usuario_id=owner_id,
+        token_sesion=token_owner,
+    )
+    lote_owner = consultar_lote_eventos_usuario(
+        db,
+        usuario_id=owner_id,
+        rol_usuario="OWNER",
+        token_sesion=token_owner,
+        lease_id=lease_owner,
+        cursor=0,
+        revalidar_sesion=True,
+        renovar_conexion=True,
+    )
+    assert [fila.id for fila in lote_owner.eventos] == [
+        evento.id,
+        evento_cajon.id,
+    ]
+    assert tipos_autorizados_para_rol("OWNER") == {
+        "operador.creado",
+        "operador.actualizado",
+        "cajon.actualizado",
     }
 
 

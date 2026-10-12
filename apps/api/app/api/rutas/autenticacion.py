@@ -19,6 +19,7 @@ from app.models import RolUsuario
 from app.seguridad.correos import CorreoInvalidoError, huella_correo, normalizar_correo
 from app.seguridad.limitador import limitador_autenticacion
 from app.servicios.autenticacion import (
+    CuentaSinAccesoAsignadoError,
     crear_sesion_usuario,
     obtener_usuario_por_token,
     revocar_sesion_actual,
@@ -96,6 +97,11 @@ def login(
             correo_normalizado=correo_normalizado,
             duracion_minutos=settings.session_duration_minutes,
         )
+    except CuentaSinAccesoAsignadoError:
+        _error_login(
+            status.HTTP_403_FORBIDDEN,
+            "Esta cuenta no tiene acceso asignado.",
+        )
     except SQLAlchemyError:
         _error_login(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
 
@@ -136,7 +142,7 @@ def me(
     except SQLAlchemyError:
         _error_sesion_no_autenticada()
 
-    if usuario is None:
+    if usuario is None or usuario.rol is None:
         _error_sesion_no_autenticada()
 
     return RespuestaSesionActual(

@@ -229,7 +229,7 @@ def test_colores_solo_se_emiten_en_tty_y_respetan_no_color(
     assert cli._estilizar("Activo", cli.ANSI_VERDE) == "Activo"
 
 
-def test_menu_principal_solo_muestra_lista_y_salida(
+def test_menu_principal_muestra_administracion_local_y_configuracion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     terminal = StringIO()
@@ -238,8 +238,9 @@ def test_menu_principal_solo_muestra_lista_y_salida(
     cli._mostrar_menu()
 
     salida = terminal.getvalue()
-    assert "SMART PARKING — GESTIÓN DE ADMINISTRADORES" in salida
-    assert "1. Ver administradores" in salida
+    assert "SMART PARKING — ADMINISTRACIÓN LOCAL" in salida
+    assert "1. Gestión de administradores" in salida
+    assert "2. Configuración del estacionamiento" in salida
     assert "0. Salir" in salida
     assert "Buscar ADMIN" not in salida
 
@@ -763,7 +764,7 @@ def test_mutacion_de_admin_no_existente_es_segura(db: Session) -> None:
         desactivar_administrador(db, 999_999)
 
 
-def test_cli_navega_por_lista_confirmacion_vacia_es_no_y_opcion_dos_es_invalida(
+def test_cli_navega_por_lista_y_rechaza_una_opcion_invalida(
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -780,13 +781,14 @@ def test_cli_navega_por_lista_confirmacion_vacia_es_no_y_opcion_dos_es_invalida(
         )
         == 0
     )
-    assert ejecutar_cli(db, monkeypatch, ["2", "0"]) == 0
+    assert ejecutar_cli(db, monkeypatch, ["9", "0"]) == 0
 
     salida = capsys.readouterr()
     assert "ADMIN registrados" in salida.out
     assert "ADMIN desactivado correctamente." not in salida.out
-    assert "SMART PARKING — GESTIÓN DE ADMINISTRADORES" in salida.out
-    assert "1. Ver administradores" in salida.out
+    assert "SMART PARKING — ADMINISTRACIÓN LOCAL" in salida.out
+    assert "1. Gestión de administradores" in salida.out
+    assert "2. Configuración del estacionamiento" in salida.out
     assert "Buscar ADMIN" not in salida.out
     assert "Opcion no valida." in salida.err
     db.rollback()

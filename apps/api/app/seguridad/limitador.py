@@ -119,6 +119,16 @@ class LimitadorActivaciones:
 
         return self._por_token.permitir(huella_token, ahora=ahora)
 
+    def permitir_origen(
+        self,
+        origen: str,
+        *,
+        ahora: float | None = None,
+    ) -> bool:
+        """Aplica el limite por origen sin imponer un cupo por enlace."""
+
+        return self._por_origen.permitir(origen, ahora=ahora)
+
     def reiniciar(self) -> None:
         """Vacía ambos limites para aislar una instancia o una prueba."""
 
@@ -172,6 +182,14 @@ class LimitadorAutenticacion:
 
 limitador_activaciones = LimitadorActivaciones()
 limitador_autenticacion = LimitadorAutenticacion()
+limitador_solicitud_desvinculacion = LimitadorAutenticacion(
+    limite_origen=30,
+    limite_correo=5,
+)
+limitador_confirmacion_desvinculacion = LimitadorActivaciones(
+    limite_origen=30,
+    limite_token=5,
+)
 
 
 __all__ = [
@@ -184,4 +202,6 @@ __all__ = [
     "LimitadorVentanaDeslizante",
     "limitador_activaciones",
     "limitador_autenticacion",
+    "limitador_confirmacion_desvinculacion",
+    "limitador_solicitud_desvinculacion",
 ]

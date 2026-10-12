@@ -25,15 +25,23 @@ class RolUsuario(StrEnum):
 
     ADMIN = "ADMIN"
     OPERADOR = "OPERADOR"
+    OWNER = "OWNER"
 
 
 class Usuario(Base):
     __tablename__ = "usuarios"
     __table_args__ = (
         Index("ix_usuarios_correo", "correo", unique=True),
+        Index(
+            "uq_usuarios_owner_activo",
+            "rol",
+            unique=True,
+            postgresql_where=text("rol = 'OWNER' AND esta_activo IS TRUE"),
+        ),
         CheckConstraint(
             "contrasena_hash IS NOT NULL OR "
-            "(rol IN ('ADMIN', 'OPERADOR') AND correo_verificado = false)",
+            "(rol IS NOT NULL AND rol IN ('ADMIN', 'OPERADOR') "
+            "AND correo_verificado = false)",
             name="ck_usuarios_contrasena_hash_pendiente_activacion",
         ),
     )
@@ -44,9 +52,9 @@ class Usuario(Base):
     apellido_materno: Mapped[str | None] = mapped_column(String(100))
     correo: Mapped[str] = mapped_column(String(320), nullable=False)
     contrasena_hash: Mapped[str | None] = mapped_column(String(255))
-    rol: Mapped[str] = mapped_column(
-        String(32),
-        nullable=False,
+    rol: Mapped[str | None] = mapped_column(
+        String(32).evaluates_none(),
+        nullable=True,
         default=RolUsuario.ADMIN.value,
         server_default=text(f"'{RolUsuario.ADMIN.value}'"),
     )
@@ -90,9 +98,11 @@ class Usuario(Base):
     )
 
     @validates("rol")
-    def validar_rol(self, _atributo: str, valor: str) -> str:
-        """Acepta únicamente los valores exactos definidos para un usuario."""
+    def validar_rol(self, _atributo: str, valor: str | None) -> str | None:
+        """Acepta roles conocidos o el estado explicito sin rol."""
 
+        if valor is None:
+            return None
         if not isinstance(valor, str):
             raise ValueError("Rol de usuario no valido.")
         try:

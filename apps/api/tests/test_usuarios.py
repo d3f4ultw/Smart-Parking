@@ -94,12 +94,14 @@ def _crear_operador(
     )
 
 
-def test_roles_canonicos_son_exactamente_admin_y_operador() -> None:
-    assert tuple(RolUsuario.__members__) == ("ADMIN", "OPERADOR")
-    assert tuple(rol.value for rol in RolUsuario) == ("ADMIN", "OPERADOR")
+def test_roles_canonicos_incluyen_admin_operador_y_owner() -> None:
+    assert tuple(RolUsuario.__members__) == ("ADMIN", "OPERADOR", "OWNER")
+    assert tuple(rol.value for rol in RolUsuario) == ("ADMIN", "OPERADOR", "OWNER")
 
 
-@pytest.mark.parametrize("rol", [RolUsuario.ADMIN, RolUsuario.OPERADOR])
+@pytest.mark.parametrize(
+    "rol", [RolUsuario.ADMIN, RolUsuario.OPERADOR, RolUsuario.OWNER]
+)
 def test_usuario_acepta_rol_canonico(rol: RolUsuario) -> None:
     usuario = Usuario(rol=rol)
 

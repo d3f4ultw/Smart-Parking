@@ -24,7 +24,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 from starlette.responses import StreamingResponse
-from starlette.types import Receive, Scope, Send
+from starlette.types import Message, Receive, Scope, Send
 
 from app.core.config import get_settings
 from app.core.database import SessionLocal, get_db
@@ -51,6 +51,7 @@ INTERVALO_HEARTBEAT_SSE = 15.0
 CURSOR_DECIMAL_MAXIMO_DIGITOS = 19
 CLAVE_CONTEXTO_STREAM_SSE = "smart_parking.contexto_stream_sse"
 CLAVE_RESPUESTA_STREAM_SSE = "smart_parking.respuesta_stream_sse"
+
 
 logger = logging.getLogger(__name__)
 _candado_contextos_stream_sse = Lock()
@@ -184,8 +185,27 @@ class RutaSSEConFinalizacion(APIRoute):
         receive: Receive,
         send: Send,
     ) -> None:
+        async def enviar_con_no_store_en_sse(mensaje: Message) -> None:
+            if mensaje["type"] == "http.response.start":
+                cabeceras = mensaje.get("headers", [])
+                tipo_contenido = next(
+                    (
+                        valor
+                        for nombre, valor in cabeceras
+                        if nombre.lower() == b"content-type"
+                    ),
+                    b"",
+                )
+                if tipo_contenido.startswith(b"text/event-stream"):
+                    mensaje["headers"] = [
+                        (nombre, valor)
+                        for nombre, valor in cabeceras
+                        if nombre.lower() != b"cache-control"
+                    ] + [(b"cache-control", b"no-store")]
+            await send(mensaje)
+
         try:
-            await super().handle(scope, receive, send)
+            await super().handle(scope, receive, enviar_con_no_store_en_sse)
         except ClientDisconnect:
             # Un socket que se cierra durante el stream es una salida normal.
             pass
@@ -289,13 +309,17 @@ def _preparar_contexto_stream_tiempo_real(
     usuario_id = usuario.id if usuario is not None else None
     rol_usuario = usuario.rol if usuario is not None else None
     db.rollback()
-    if usuario_id is None or rol_usuario not in {"ADMIN", "OPERADOR"}:
+    if (
+        usuario_id is None
+        or rol_usuario is None
+        or rol_usuario not in {"ADMIN", "OWNER", "OPERADOR"}
+    ):
         _error_sesion_no_autenticada()
 
     valor_cursor, cursor_explicito = _obtener_cursor_solicitado(request)
     try:
         tipos_autorizados = tipos_autorizados_para_rol(rol_usuario)
-        marca, primer_evento = obtener_marca_eventos(db, tipos_autorizados)
+        marca, primer_evento = obtener_marca_eventos(db)
         db.rollback()
         cursor = _interpretar_cursor_sse(valor_cursor, marca)
         requiere_resync = (
@@ -428,14 +452,17 @@ async def _generar_eventos_tiempo_real(
             else:
                 for evento in lote.eventos:
                     cursor_escaneado = evento.id
+                    datos_evento: dict[str, object] = {
+                        "recurso_tipo": evento.recurso_tipo,
+                        "recurso_id": evento.recurso_id,
+                        "ocurrido_en": evento.ocurrido_en,
+                    }
+                    if evento.datos is not None:
+                        datos_evento["datos"] = evento.datos
                     yield ServerSentEvent(
                         id=str(evento.id),
                         event=evento.tipo,
-                        data={
-                            "recurso_tipo": evento.recurso_tipo,
-                            "recurso_id": evento.recurso_id,
-                            "ocurrido_en": evento.ocurrido_en,
-                        },
+                        data=datos_evento,
                     )
                 cursor_escaneado = max(cursor_escaneado, lote.cursor_escaneado)
 

@@ -30,6 +30,8 @@ type CapturedRequest = {
   role?: string
   roleAlias?: string
   userId?: string
+  authorization?: string
+  origin?: string
   body: string
 }
 
@@ -118,6 +120,8 @@ function captureRequest(request: IncomingMessage, body: string): CapturedRequest
     role: headerValue(request.headers['x-user-role']),
     roleAlias: headerValue(request.headers['x-role']),
     userId: headerValue(request.headers['x-user-id']),
+    authorization: headerValue(request.headers.authorization),
+    origin: headerValue(request.headers.origin),
     body,
   }
 }
@@ -267,6 +271,7 @@ async function startHarness(): Promise<Harness> {
         env: {
           ...process.env,
           NUXT_API_INTERNAL_BASE_URL: upstreamUrl,
+          NUXT_PUBLIC_MANAGEMENT_ORIGIN: origin,
           NUXT_TELEMETRY_DISABLED: '1',
           NO_COLOR: '1',
           NODE_ENV: 'development',
@@ -466,6 +471,219 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         'BFF did not replace the client user ID header',
       )
       assertNoSensitiveBody(forged.body)
+      harness.clearRequests()
+    })
+
+    await suite.test('Cajón listing proxy forwards only its session cookie', async () => {
+      const sessionToken = marker()
+      const unrelatedCookie = marker()
+      const deviceToken = marker()
+      sensitiveMarkers.push(sessionToken, unrelatedCookie, deviceToken)
+      const cookie = `smart_parking_session=${sessionToken}; unrelated=${unrelatedCookie}`
+      const payload = { cajones: [], cursor_eventos: '17' }
+      const response = await send(
+        '/api/admin/cajones',
+        {
+          headers: {
+            cookie,
+            'x-user-role': 'ADMIN',
+            'x-role': 'ADMIN',
+            'x-user-id': '41',
+            authorization: `Bearer ${deviceToken}`,
+          },
+        },
+        jsonPlan(200, payload),
+      )
+
+      assert.equal(response.response.status, 200, 'Listing status is preserved')
+      assertForwarded(response, 'GET', '/api/cajones')
+      assert.equal(
+        response.upstreamRequest?.cookie,
+        `smart_parking_session=${sessionToken}`,
+        'Only the staff session cookie reaches FastAPI',
+      )
+      assert.equal(response.upstreamRequest?.role, undefined, 'Client role is not forwarded')
+      assert.equal(response.upstreamRequest?.roleAlias, undefined, 'Role alias is not forwarded')
+      assert.equal(response.upstreamRequest?.userId, undefined, 'Client user ID is not forwarded')
+      assert.equal(response.upstreamRequest?.authorization, undefined, 'Device bearer is not forwarded')
+      assert.deepEqual(JSON.parse(response.body), payload, 'Valid listing body is preserved')
+      assert.equal(response.response.headers.get('cache-control'), 'no-store')
+      assertNoSensitiveBody(response.body)
+
+      harness.clearRequests()
+      const forgedRole = await send(
+        '/api/admin/cajones',
+        {
+          headers: {
+            'x-user-role': 'ADMIN',
+            'x-role': 'ADMIN',
+            'x-user-id': '1',
+            authorization: `Bearer ${deviceToken}`,
+          },
+        },
+        jsonPlan(401, { detail: 'No autenticado' }),
+      )
+      assert.equal(forgedRole.response.status, 401, 'Authentication failure is preserved')
+      assertForwarded(forgedRole, 'GET', '/api/cajones')
+      assert.equal(forgedRole.upstreamRequest?.cookie, undefined)
+      assert.equal(forgedRole.upstreamRequest?.role, undefined)
+      assert.equal(forgedRole.upstreamRequest?.roleAlias, undefined)
+      assert.equal(forgedRole.upstreamRequest?.userId, undefined)
+      assert.equal(forgedRole.upstreamRequest?.authorization, undefined)
+      assert.equal(forgedRole.response.headers.get('cache-control'), 'no-store')
+
+      const failure = await send(
+        '/api/admin/cajones',
+        { headers: { cookie: `smart_parking_session=${sessionToken}` } },
+        jsonPlan(503, { detail: 'Servicio no disponible' }),
+      )
+      assert.equal(failure.response.status, 503, 'Upstream failure status is preserved')
+      assertForwarded(failure, 'GET', '/api/cajones')
+      assert.deepEqual(JSON.parse(failure.body), { detail: 'Servicio no disponible' })
+      assert.equal(failure.response.headers.get('cache-control'), 'no-store')
+      assertNoSensitiveBody(failure.body)
+      harness.clearRequests()
+    })
+
+    await suite.test('Cajón operational PATCH allow-lists ID, body, and session cookie', async () => {
+      const sessionCookie = marker()
+      const unrelatedCookie = marker()
+      const deviceToken = marker()
+      const hiddenField = marker()
+      sensitiveMarkers.push(sessionCookie, unrelatedCookie, deviceToken, hiddenField)
+      const patchBody = JSON.stringify({
+        estado: 'MANTENIMIENTO',
+        motivo: 'Inspección',
+      })
+      const payload = {
+        id: 41,
+        cambio_aplicado: true,
+        estado_operativo: 'MANTENIMIENTO',
+      }
+      const actualizado = await send(
+        '/api/admin/cajones/41/estado-operativo',
+        {
+          method: 'PATCH',
+          headers: {
+            cookie: `smart_parking_session=${sessionCookie}; unrelated=${unrelatedCookie}`,
+            'content-type': 'application/json',
+            'x-user-role': 'ADMIN',
+            'x-role': 'ADMIN',
+            'x-user-id': '41',
+            authorization: `Bearer ${deviceToken}`,
+          },
+          body: patchBody,
+        },
+        jsonPlan(200, payload),
+      )
+
+      assert.equal(actualizado.response.status, 200, 'PATCH status is preserved')
+      assertForwarded(actualizado, 'PATCH', '/api/cajones/41/estado-operativo')
+      assert.equal(actualizado.upstreamRequest?.cookie, `smart_parking_session=${sessionCookie}`)
+      assert.equal(actualizado.upstreamRequest?.contentType?.split(';')[0], 'application/json')
+      assert.equal(actualizado.upstreamRequest?.body, patchBody, 'Allowed JSON fields are forwarded')
+      assert.equal(actualizado.upstreamRequest?.role, undefined)
+      assert.equal(actualizado.upstreamRequest?.roleAlias, undefined)
+      assert.equal(actualizado.upstreamRequest?.userId, undefined)
+      assert.equal(actualizado.upstreamRequest?.authorization, undefined)
+      assert.equal(actualizado.response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(JSON.parse(actualizado.body), payload)
+      assertNoSensitiveBody(actualizado.body)
+
+      harness.clearRequests()
+      const disponible = await send(
+        '/api/admin/cajones/41/estado-operativo',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ estado: 'DISPONIBLE' }),
+        },
+        jsonPlan(200, { id: 41, cambio_aplicado: false }),
+      )
+      assert.equal(disponible.response.status, 200)
+      assertForwarded(disponible, 'PATCH', '/api/cajones/41/estado-operativo')
+      assert.deepEqual(JSON.parse(disponible.upstreamRequest?.body ?? '{}'), {
+        estado: 'DISPONIBLE',
+      }, 'DISPONIBLE never forwards an empty motivo')
+      assert.equal(disponible.upstreamRequest?.cookie, undefined)
+      assert.equal(disponible.response.headers.get('cache-control'), 'no-store')
+
+      harness.clearRequests()
+      const sinMotivo = await send(
+        '/api/admin/cajones/41/estado-operativo',
+        {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ estado: 'MANTENIMIENTO', motivo: '   ' }),
+        },
+        jsonPlan(200, { id: 41, cambio_aplicado: true }),
+      )
+      assert.equal(sinMotivo.response.status, 200)
+      assert.deepEqual(JSON.parse(sinMotivo.upstreamRequest?.body ?? '{}'), {
+        estado: 'MANTENIMIENTO',
+      }, 'Blank optional reason is omitted before forwarding')
+
+      harness.clearRequests()
+      const fallaUpstream = await send(
+        '/api/admin/cajones/41/estado-operativo',
+        {
+          method: 'PATCH',
+          headers: {
+            cookie: `smart_parking_session=${sessionCookie}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ estado: 'MANTENIMIENTO', motivo: 'Ajuste' }),
+        },
+        jsonPlan(422, { detail: 'Solicitud invalida' }),
+      )
+      assert.equal(fallaUpstream.response.status, 422, 'FastAPI validation status is preserved')
+      assertForwarded(fallaUpstream, 'PATCH', '/api/cajones/41/estado-operativo')
+      assert.equal(fallaUpstream.response.headers.get('cache-control'), 'no-store')
+      assertNoSensitiveBody(fallaUpstream.body)
+
+      harness.clearRequests()
+      const antesInvalidas = harness.requests.length
+      for (const [path, body] of [
+        ['/api/admin/cajones/0/estado-operativo', { estado: 'DISPONIBLE' }],
+        ['/api/admin/cajones/9007199254740992/estado-operativo', { estado: 'DISPONIBLE' }],
+        ['/api/admin/cajones/41/estado-operativo', { estado: 'MANTENIMIENTO', motivo: 'x'.repeat(251) }],
+        ['/api/admin/cajones/41/estado-operativo', { estado: 'DISPONIBLE', motivo: 'No aplica' }],
+        ['/api/admin/cajones/41/estado-operativo', { estado: 'DISPONIBLE', device_secret: hiddenField }],
+      ] as const) {
+        const rechazo = await send(path, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        assert.ok(rechazo.response.status >= 400, 'Malformed ID or payload is rejected locally')
+        assert.equal(rechazo.upstreamRequest, undefined, 'Invalid input never reaches FastAPI')
+        assertNoSensitiveBody(rechazo.body)
+      }
+      assert.equal(harness.requests.length, antesInvalidas)
+
+      const sinCookie = await send(
+        '/api/admin/cajones/41/estado-operativo',
+        {
+          method: 'PATCH',
+          headers: {
+            'content-type': 'application/json',
+            'x-user-role': 'ADMIN',
+            'x-role': 'ADMIN',
+            'x-user-id': '1',
+            authorization: `Bearer ${deviceToken}`,
+          },
+          body: JSON.stringify({ estado: 'DISPONIBLE' }),
+        },
+        jsonPlan(401, { detail: 'No autenticado' }),
+      )
+      assert.equal(sinCookie.response.status, 401)
+      assertForwarded(sinCookie, 'PATCH', '/api/cajones/41/estado-operativo')
+      assert.equal(sinCookie.upstreamRequest?.cookie, undefined)
+      assert.equal(sinCookie.upstreamRequest?.authorization, undefined)
+      assert.equal(sinCookie.upstreamRequest?.role, undefined)
+      assert.equal(sinCookie.upstreamRequest?.roleAlias, undefined)
+      assert.equal(sinCookie.upstreamRequest?.userId, undefined)
+      assertNoSensitiveBody(sinCookie.body)
       harness.clearRequests()
     })
 
@@ -1036,6 +1254,310 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       const invalidMode = await send('/api/activacion/invalid-mode', { method: 'POST' })
       assert.ok(invalidMode.response.status === 404, 'Unknown activation mode is rejected locally')
       assert.ok(harness.requests.length === invalidModeBefore, 'Unknown activation mode did not reach FastAPI')
+      harness.clearRequests()
+    })
+
+    await suite.test('OWNER activation BFF scopes cookies and strips session credentials', async () => {
+      const exchangeBody = JSON.stringify({ token: activationToken })
+      const exchange = await send(
+        '/api/autenticacion/activacion-propietario/enlace',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            cookie: `smart_parking_session=${sessionToken}`,
+          },
+          body: exchangeBody,
+        },
+        {
+          status: 204,
+          headers: {
+            'set-cookie': `smart_parking_owner_activation_challenge=${challengeToken}; Path=/api/autenticacion/activacion-propietario; HttpOnly; Secure; SameSite=Lax`,
+            'cache-control': 'no-store',
+          },
+        },
+      )
+      assert.ok(exchange.response.status === 204, 'OWNER exchange status was preserved')
+      assertForwarded(exchange, 'POST', '/api/autenticacion/activacion-propietario/enlace')
+      assert.ok(exchange.upstreamRequest.cookie === undefined, 'Session cookie is not sent during email-token exchange')
+      assert.ok(exchange.upstreamRequest.body === exchangeBody, 'Only the opaque email token is forwarded')
+      assert.ok(exchange.response.headers.get('cache-control') === 'no-store', 'OWNER exchange is no-store')
+      assert.ok(exchange.response.headers.get('referrer-policy') === 'no-referrer', 'OWNER exchange is no-referrer')
+      const exchangeCookies = exchange.response.headers.getSetCookie()
+      assert.ok(exchangeCookies.length === 1, 'OWNER challenge cookie reached the browser')
+      assert.ok(
+        /httponly/i.test(exchangeCookies[0])
+          && /secure/i.test(exchangeCookies[0])
+          && /samesite=lax/i.test(exchangeCookies[0])
+          && /path=\/api\/autenticacion\/activacion-propietario/i.test(exchangeCookies[0]),
+        'OWNER challenge cookie remains HttpOnly and path-scoped',
+      )
+
+      const ownerCookie = `smart_parking_owner_activation_challenge=${challengeToken}`
+      const status = await send(
+        '/api/autenticacion/activacion-propietario/desafio',
+        {
+          headers: {
+            cookie: `${ownerCookie}; smart_parking_session=${sessionToken}`,
+          },
+        },
+        jsonPlan(200, { valido: true, tipo_cuenta: 'nueva' }),
+      )
+      assert.ok(status.response.status === 200, 'OWNER challenge status was preserved')
+      assertForwarded(status, 'GET', '/api/autenticacion/activacion-propietario/desafio')
+      assert.ok(status.upstreamRequest.cookie === ownerCookie, 'Only the scoped OWNER challenge reaches FastAPI')
+      assert.ok(status.response.headers.get('cache-control') === 'no-store', 'OWNER challenge status is no-store')
+      assert.ok(status.response.headers.get('referrer-policy') === 'no-referrer', 'OWNER challenge status is no-referrer')
+      assertNoSensitiveBody(status.body)
+
+      const completionBody = JSON.stringify({
+        contrasena_admin: password,
+        contrasena_login: sensitiveMarkers[1],
+      })
+      const completion = await send(
+        '/api/autenticacion/activacion-propietario/completar',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            cookie: `${ownerCookie}; smart_parking_session=${sessionToken}`,
+          },
+          body: completionBody,
+        },
+        jsonPlan(200, { estado: 'owner_activado' }, {
+          'set-cookie': 'smart_parking_owner_activation_challenge=; Max-Age=0; Path=/api/autenticacion/activacion-propietario; HttpOnly; Secure; SameSite=Lax',
+        }),
+      )
+      assert.ok(completion.response.status === 200, 'OWNER completion status was preserved')
+      assertForwarded(completion, 'POST', '/api/autenticacion/activacion-propietario/completar')
+      assert.ok(completion.upstreamRequest.cookie === ownerCookie, 'Only OWNER challenge cookie reaches completion')
+      assert.ok(completion.upstreamRequest.body === completionBody, 'Password body was forwarded to FastAPI')
+      assert.ok(completion.response.headers.get('cache-control') === 'no-store', 'OWNER completion is no-store')
+      assert.ok(completion.response.headers.get('referrer-policy') === 'no-referrer', 'OWNER completion is no-referrer')
+      assertNoSensitiveBody(completion.body)
+      const removal = completion.response.headers.getSetCookie()
+      assert.ok(removal.length === 1 && /max-age=0/i.test(removal[0]), 'OWNER challenge cookie is removed after activation')
+      assert.ok(/path=\/api\/autenticacion\/activacion-propietario/i.test(removal[0]), 'OWNER challenge removal stays path-scoped')
+      harness.clearRequests()
+    })
+
+    await suite.test('temporary OWNER management BFF scopes its cookie and protects mutations', async () => {
+      const ticket = marker()
+      const pairingCode = marker()
+      const managementToken = marker()
+      const ordinarySession = marker()
+      sensitiveMarkers.push(ticket, pairingCode, managementToken, ordinarySession)
+      const managementCookie = `smart_parking_owner_management=${managementToken}`
+
+      const claimBody = JSON.stringify({
+        ticket,
+        codigo_apareamiento: pairingCode,
+      })
+      const claim = await send(
+        '/api/gestion-propietario/claim',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+            cookie: `smart_parking_session=${ordinarySession}; ${managementCookie}`,
+          },
+          body: claimBody,
+        },
+        jsonPlan(200, { activa: true }, {
+          'set-cookie': `${managementCookie}; Path=/; HttpOnly; Secure; SameSite=Strict`,
+          'cache-control': 'no-store',
+        }),
+      )
+      assert.equal(claim.response.status, 200)
+      assertForwarded(claim, 'POST', '/api/gestion-propietario/v1/claim')
+      assert.equal(claim.upstreamRequest?.origin, harness.origin)
+      assert.equal(claim.upstreamRequest?.cookie, managementCookie)
+      assert.equal(claim.upstreamRequest?.body, claimBody)
+      assert.equal(claim.response.headers.get('cache-control'), 'no-store')
+      assert.equal(claim.response.headers.get('referrer-policy'), 'no-referrer')
+      const claimCookies = claim.response.headers.getSetCookie()
+      assert.equal(claimCookies.length, 1)
+      assert.ok(/httponly/i.test(claimCookies[0]))
+      assert.ok(/secure/i.test(claimCookies[0]))
+      assert.ok(/samesite=strict/i.test(claimCookies[0]))
+      assertNoSensitiveBody(claim.body)
+
+      harness.clearRequests()
+      const sinOrigen = await send(
+        '/api/gestion-propietario/claim',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'https://attacker.invalid',
+            'content-type': 'application/json',
+          },
+          body: claimBody,
+        },
+      )
+      assert.equal(sinOrigen.response.status, 403)
+      assert.equal(sinOrigen.upstreamRequest, undefined)
+      assertNoSensitiveBody(sinOrigen.body)
+
+      harness.clearRequests()
+      const estado = await send(
+        '/api/gestion-propietario/estado',
+        {
+          headers: {
+            cookie: `${managementCookie}; smart_parking_session=${ordinarySession}`,
+          },
+        },
+        jsonPlan(200, { owner_activo: false, owner: null, inscripciones: [] }),
+      )
+      assert.equal(estado.response.status, 200)
+      assertForwarded(estado, 'GET', '/api/gestion-propietario/v1/estado')
+      assert.equal(estado.upstreamRequest?.cookie, managementCookie)
+      assert.equal(estado.response.headers.get('cache-control'), 'no-store')
+      assert.equal(estado.response.headers.get('referrer-policy'), 'no-referrer')
+      assertNoSensitiveBody(estado.body)
+
+      harness.clearRequests()
+      const reenvio = await send(
+        '/api/gestion-propietario/inscripciones/17/reenviar',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            cookie: `${managementCookie}; smart_parking_session=${ordinarySession}`,
+          },
+        },
+        { status: 204 },
+      )
+      assert.equal(reenvio.response.status, 204)
+      assertForwarded(reenvio, 'POST', '/api/gestion-propietario/v1/inscripciones/17/reenviar')
+      assert.equal(reenvio.upstreamRequest?.cookie, managementCookie)
+      assert.equal(reenvio.upstreamRequest?.origin, harness.origin)
+
+      const adminPassword = marker()
+      sensitiveMarkers.push(adminPassword)
+      harness.clearRequests()
+      const desvinculacion = await send(
+        '/api/gestion-propietario/desvinculacion',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+            cookie: managementCookie,
+          },
+          body: JSON.stringify({ contrasena_admin: adminPassword }),
+        },
+        jsonPlan(202, { estado: 'confirmacion_enviada' }, {
+          'cache-control': 'no-store',
+          'referrer-policy': 'no-referrer',
+        }),
+      )
+      assert.equal(desvinculacion.response.status, 202)
+      assertForwarded(desvinculacion, 'POST', '/api/gestion-propietario/v1/desvinculacion')
+      assert.equal(desvinculacion.upstreamRequest?.cookie, managementCookie)
+      assert.equal(desvinculacion.upstreamRequest?.origin, harness.origin)
+      assert.equal(
+        desvinculacion.upstreamRequest?.body,
+        JSON.stringify({ contrasena_admin: adminPassword }),
+      )
+      assert.equal(desvinculacion.response.headers.get('cache-control'), 'no-store')
+      assertNoSensitiveBody(desvinculacion.body)
+
+      const unlinkToken = marker()
+      sensitiveMarkers.push(unlinkToken)
+      harness.clearRequests()
+      const confirmarDesvinculacion = await send(
+        '/api/gestion-propietario/desvinculacion/confirmar',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+            cookie: managementCookie,
+          },
+          body: JSON.stringify({ token: unlinkToken }),
+        },
+        jsonPlan(200, { estado: 'dueno_desvinculado' }, {
+          'cache-control': 'no-store',
+          'referrer-policy': 'no-referrer',
+        }),
+      )
+      assert.equal(confirmarDesvinculacion.response.status, 200)
+      assertForwarded(
+        confirmarDesvinculacion,
+        'POST',
+        '/api/gestion-propietario/v1/desvinculacion/confirmar',
+      )
+      assert.equal(confirmarDesvinculacion.upstreamRequest?.cookie, undefined)
+      assert.equal(confirmarDesvinculacion.upstreamRequest?.origin, harness.origin)
+      assert.equal(
+        confirmarDesvinculacion.upstreamRequest?.body,
+        JSON.stringify({ token: unlinkToken }),
+      )
+      assert.equal(
+        confirmarDesvinculacion.response.headers.get('referrer-policy'),
+        'no-referrer',
+      )
+      assertNoSensitiveBody(confirmarDesvinculacion.body)
+
+      harness.clearRequests()
+      const confirmacionSinOrigen = await send(
+        '/api/gestion-propietario/desvinculacion/confirmar',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'https://attacker.invalid',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ token: unlinkToken }),
+        },
+      )
+      assert.equal(confirmacionSinOrigen.response.status, 403)
+      assert.equal(confirmacionSinOrigen.upstreamRequest, undefined)
+      assertNoSensitiveBody(confirmacionSinOrigen.body)
+
+      harness.clearRequests()
+      const idInvalido = await send(
+        '/api/gestion-propietario/inscripciones/0/reenviar',
+        { method: 'POST', headers: { origin: harness.origin } },
+      )
+      assert.equal(idInvalido.response.status, 400)
+      assert.equal(idInvalido.upstreamRequest, undefined)
+
+      harness.clearRequests()
+      const paginaResponse = jsonPlan(200, { activa: false })
+      harness.queueResponse(paginaResponse)
+      const pagina = await fetch(`${harness.origin}/admin/gestion-propietario#${ticket}`)
+      const paginaBody = await pagina.text()
+      assert.equal(pagina.status, 200)
+      assert.ok(paginaBody.includes('Navegador no autorizado'))
+      assert.ok(!paginaBody.includes('Procesos de registro'))
+      assert.ok(!paginaBody.includes('Salir'))
+      assert.ok(!paginaBody.includes(ticket))
+      assert.ok(!paginaBody.includes(pairingCode))
+      assert.ok(!paginaBody.includes(managementToken))
+      assert.ok(!paginaBody.includes(ordinarySession))
+      assert.ok(harness.requests.some((item) => item.path === '/api/gestion-propietario/v1/sesion'))
+      assertNoSensitiveBody(paginaBody)
+      harness.clearRequests()
+
+      const previewToken = marker()
+      sensitiveMarkers.push(previewToken)
+      const confirmacionPublica = await fetch(
+        harness.origin + '/confirmar-desvinculacion#desvincular=' + previewToken,
+      )
+      const confirmacionPublicaBody = await confirmacionPublica.text()
+      assert.equal(confirmacionPublica.status, 200)
+      assert.equal(confirmacionPublica.headers.get('cache-control'), 'no-store')
+      assert.equal(confirmacionPublica.headers.get('referrer-policy'), 'no-referrer')
+      assert.ok(!confirmacionPublicaBody.includes(previewToken))
+      assert.ok(confirmacionPublicaBody.includes('Confirmación por correo'))
+      assert.equal(
+        harness.requests.some((item) =>
+          item.path.endsWith('/desvinculacion/confirmar')),
+        false,
+      )
+      assertNoSensitiveBody(confirmacionPublicaBody)
       harness.clearRequests()
     })
 

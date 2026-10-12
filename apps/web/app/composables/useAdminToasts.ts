@@ -1,4 +1,4 @@
-export type TipoToastAdmin = 'success' | 'error'
+export type TipoToastAdmin = 'success' | 'error' | 'warning'
 
 export interface ToastAdmin {
   id: number

@@ -76,9 +76,14 @@ test('mapea 401 a un error genérico de autenticación', () => {
   assert.equal(mapearErrorLogin(401), 'Correo o contraseña incorrectos.')
 })
 
+test('informa cuando una cuenta no tiene acceso asignado', () => {
+  assert.equal(mapearErrorLogin(403), 'Esta cuenta no tiene acceso asignado.')
+})
+
 test('elige el área según el rol confirmado por el servidor', () => {
   assert.equal(obtenerRutaDespuesLogin('ADMIN'), '/admin')
   assert.equal(obtenerRutaDespuesLogin('OPERADOR'), '/operador')
+  assert.equal(obtenerRutaDespuesLogin('OWNER'), '/admin')
 })
 
 test('mapea cualquier cuenta desconocida al mismo error 401', () => {
@@ -121,6 +126,7 @@ test('ignora valores de estado no numéricos y errores primitivos', () => {
 
 test('los mensajes públicos no incluyen credenciales ni detalles internos', () => {
   const mensajes = [
+    mapearErrorLogin(403),
     mapearErrorLogin(401),
     mapearErrorLogin(422),
     mapearErrorLogin(429),

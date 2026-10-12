@@ -3,7 +3,14 @@ from logging.config import fileConfig
 from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base, engine
-from app.models import ActivacionCuenta, Sesion, Usuario  # noqa: F401
+from app.models import (  # noqa: F401
+    ActivacionCuenta,
+    CuentaPropietario,
+    InscripcionPropietario,
+    Sesion,
+    SesionGestionPropietario,
+    Usuario,
+)
 
 config = context.config
 

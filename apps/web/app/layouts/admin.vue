@@ -53,12 +53,20 @@ const nombreAdmin = computed(() => {
   return nombreCompleto || usuario.value.correo
 })
 
+const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Owner' : 'Administrador')
+
 const inicialAdmin = computed(() => nombreAdmin.value.charAt(0).toUpperCase())
 
-function esRutaActiva(ruta: 'inicio' | 'operadores') {
-  return ruta === 'inicio'
-    ? route.path === '/admin'
-    : route.path.startsWith('/admin/operadores')
+function esRutaActiva(ruta: 'inicio' | 'estacionamiento' | 'operadores') {
+  if (ruta === 'inicio') {
+    return route.path === '/admin'
+  }
+
+  if (ruta === 'estacionamiento') {
+    return route.path === '/admin/estacionamiento'
+  }
+
+  return route.path.startsWith('/admin/operadores')
 }
 
 function cerrarMenuMovil() {
@@ -198,12 +206,18 @@ onBeforeUnmount(() => {
           </svg>
           <span>Dashboard</span>
         </NuxtLink>
-        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
+        <NuxtLink
+          class="navigation-item"
+          :class="{ 'is-active': esRutaActiva('estacionamiento') }"
+          to="/admin/estacionamiento"
+          :aria-current="esRutaActiva('estacionamiento') ? 'page' : undefined"
+          @click="cerrarMenuMovil"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 20V9l9-5 9 5v11M3 12h18M7 20v-5h10v5" />
           </svg>
           <span>Estacionamiento</span>
-        </button>
+        </NuxtLink>
         <NuxtLink
           class="navigation-item"
           :class="{ 'is-active': esRutaActiva('operadores') }"
@@ -244,7 +258,7 @@ onBeforeUnmount(() => {
           <span class="admin-avatar" aria-hidden="true">{{ inicialAdmin }}</span>
           <span class="admin-copy">
             <span class="admin-name">{{ nombreAdmin }}</span>
-            <span class="admin-role">Administrador</span>
+            <span class="admin-role">{{ etiquetaRol }}</span>
           </span>
         </div>
         <button

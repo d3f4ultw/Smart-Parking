@@ -50,3 +50,8 @@ temp/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local ESP32 credentials
+/firmware/esp32/parking_slot/secrets.py
+
+/scripts/

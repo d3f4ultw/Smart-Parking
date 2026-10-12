@@ -8,18 +8,44 @@ export type EstadoEventosTiempoReal =
   | 'sesion-perdida'
   | 'detenido'
 
-type TipoEvento = 'operador.actualizado' | 'operador.creado' | 'resync'
+type EstadoFisicoCajon = 'DESCONOCIDO' | 'LIBRE' | 'OCUPADO'
+type EstadoOperativoCajon = 'DISPONIBLE' | 'MANTENIMIENTO' | 'FUERA_DE_SERVICIO'
+type EstadoEfectivoCajon =
+  | 'DESCONOCIDO'
+  | 'LIBRE'
+  | 'OCUPADO'
+  | 'NO_DISPONIBLE'
+
+export type InstantaneaEventoCajon = {
+  cajon_id: number
+  numero: number
+  estado_fisico: EstadoFisicoCajon
+  estado_operativo: EstadoOperativoCajon
+  motivo_operativo: string | null
+  estado_efectivo: EstadoEfectivoCajon
+  estado_fisico_actualizado_en: string | null
+  estado_operativo_actualizado_en: string
+  actualizado_en: string
+}
+
+type TipoEvento =
+  | 'operador.actualizado'
+  | 'operador.creado'
+  | 'cajon.actualizado'
+  | 'resync'
 
 type EventoTiempoReal = {
   id: string
   tipo: TipoEvento
   recursoId: number | null
+  datosCajon?: InstantaneaEventoCajon
 }
 
 export type ManejadoresEventosTiempoReal = {
   alActualizarOperador: (id: number) => void
   alCrearOperador: (id: number, cursorEvento: string) => void
   alResync: () => void | Promise<void>
+  alActualizarCajon?: (datos: InstantaneaEventoCajon) => void
 }
 
 type SuscripcionEventosTiempoReal = {
@@ -60,7 +86,25 @@ const EVENT_SOURCE_CLOSED = 2
 const EVENTOS_PERMITIDOS = new Set<TipoEvento>([
   'operador.actualizado',
   'operador.creado',
+  'cajon.actualizado',
   'resync',
+])
+
+const ESTADOS_FISICOS_CAJON = new Set<EstadoFisicoCajon>([
+  'DESCONOCIDO',
+  'LIBRE',
+  'OCUPADO',
+])
+const ESTADOS_OPERATIVOS_CAJON = new Set<EstadoOperativoCajon>([
+  'DISPONIBLE',
+  'MANTENIMIENTO',
+  'FUERA_DE_SERVICIO',
+])
+const ESTADOS_EFECTIVOS_CAJON = new Set<EstadoEfectivoCajon>([
+  'DESCONOCIDO',
+  'LIBRE',
+  'OCUPADO',
+  'NO_DISPONIBLE',
 ])
 
 function esCursorDecimal(valor: string): boolean {
@@ -74,6 +118,80 @@ function compararCursores(a: string, b: string): number {
     return cursorA.length > cursorB.length ? 1 : -1
   }
   return cursorA === cursorB ? 0 : cursorA > cursorB ? 1 : -1
+}
+
+function esFechaConZona(valor: unknown): valor is string {
+  return typeof valor === 'string'
+    && /(?:Z|[+-]\d{2}:\d{2})$/.test(valor)
+    && !Number.isNaN(Date.parse(valor))
+}
+
+function analizarInstantaneaCajon(valor: unknown): InstantaneaEventoCajon | null {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
+    return null
+  }
+  const datos = valor as Record<string, unknown>
+  const clavesEsperadas = [
+    'cajon_id',
+    'numero',
+    'estado_fisico',
+    'estado_operativo',
+    'motivo_operativo',
+    'estado_efectivo',
+    'estado_fisico_actualizado_en',
+    'estado_operativo_actualizado_en',
+    'actualizado_en',
+  ]
+  if (
+    Object.keys(datos).length !== clavesEsperadas.length
+    || Object.keys(datos).some((clave) => !clavesEsperadas.includes(clave))
+  ) {
+    return null
+  }
+
+  const { cajon_id, numero } = datos
+  const fisico = datos.estado_fisico
+  const operativo = datos.estado_operativo
+  const motivo = datos.motivo_operativo
+  const efectivo = datos.estado_efectivo
+  if (
+    typeof cajon_id !== 'number'
+    || !Number.isSafeInteger(cajon_id)
+    || cajon_id <= 0
+    || typeof numero !== 'number'
+    || !Number.isSafeInteger(numero)
+    || numero <= 0
+    || typeof fisico !== 'string'
+    || !ESTADOS_FISICOS_CAJON.has(fisico as EstadoFisicoCajon)
+    || typeof operativo !== 'string'
+    || !ESTADOS_OPERATIVOS_CAJON.has(operativo as EstadoOperativoCajon)
+    || typeof efectivo !== 'string'
+    || !ESTADOS_EFECTIVOS_CAJON.has(efectivo as EstadoEfectivoCajon)
+    || (motivo !== null && typeof motivo !== 'string')
+    || (typeof motivo === 'string' && (motivo.trim().length === 0 || motivo.length > 250))
+    || (operativo === 'DISPONIBLE' && motivo !== null)
+    || (
+      datos.estado_fisico_actualizado_en !== null
+      && !esFechaConZona(datos.estado_fisico_actualizado_en)
+    )
+    || !esFechaConZona(datos.estado_operativo_actualizado_en)
+    || !esFechaConZona(datos.actualizado_en)
+  ) {
+    return null
+  }
+
+  const estadoEfectivoEsperado = operativo !== 'DISPONIBLE'
+    ? 'NO_DISPONIBLE'
+    : fisico === 'OCUPADO'
+      ? 'OCUPADO'
+      : fisico === 'LIBRE'
+        ? 'LIBRE'
+        : 'DESCONOCIDO'
+  if (efectivo !== estadoEfectivoEsperado) {
+    return null
+  }
+
+  return datos as InstantaneaEventoCajon
 }
 
 function analizarEvento(tipo: string, evento: Event): EventoTiempoReal | null {
@@ -95,12 +213,25 @@ function analizarEvento(tipo: string, evento: Event): EventoTiempoReal | null {
     }
     const recurso = datos as Record<string, unknown>
     const recursoId = recurso.recurso_id
-    if (
-      recurso.recurso_tipo !== 'operador'
-      || typeof recursoId !== 'number'
-      || !Number.isSafeInteger(recursoId)
-      || recursoId <= 0
-    ) {
+    if (typeof recursoId !== 'number' || !Number.isSafeInteger(recursoId) || recursoId <= 0) {
+      return null
+    }
+    if (tipo === 'cajon.actualizado') {
+      if (recurso.recurso_tipo !== 'cajon') {
+        return null
+      }
+      const datosCajon = analizarInstantaneaCajon(recurso.datos)
+      if (datosCajon === null || datosCajon.cajon_id !== recursoId) {
+        return null
+      }
+      return {
+        id: cursor,
+        tipo: 'cajon.actualizado',
+        recursoId,
+        datosCajon,
+      }
+    }
+    if (recurso.recurso_tipo !== 'operador') {
       return null
     }
     return { id: cursor, tipo: tipo as TipoEvento, recursoId }
@@ -155,6 +286,10 @@ export function crearControladorEventosTiempoReal(
     suscriptor.cursor = evento.id
     if (evento.tipo === 'resync') {
       void suscriptor.manejadores.alResync()
+    } else if (evento.tipo === 'cajon.actualizado') {
+      if (evento.datosCajon !== undefined) {
+        suscriptor.manejadores.alActualizarCajon?.(evento.datosCajon)
+      }
     } else if (evento.recursoId !== null && evento.tipo === 'operador.creado') {
       suscriptor.manejadores.alCrearOperador(evento.recursoId, evento.id)
     } else if (evento.recursoId !== null) {

@@ -51,12 +51,16 @@ onBeforeUnmount(() => {
           :key="toast.id"
           class="toast"
           :class="`toast--${toast.tipo}`"
-          :role="toast.tipo === 'error' ? 'alert' : 'status'"
+          :role="toast.tipo === 'success' ? 'status' : 'alert'"
           aria-atomic="true"
         >
           <span class="toast-icon" aria-hidden="true">
             <svg v-if="toast.tipo === 'success'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="m5 12 4 4L19 6" />
+            </svg>
+            <svg v-else-if="toast.tipo === 'warning'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10.3 3.9 2.4 17.5A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+              <path d="M12 9v4m0 3h.01" />
             </svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <circle cx="12" cy="12" r="9" />
@@ -81,6 +85,7 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   --toast-accent: #5c3a86;
   --toast-error-accent: #67456e;
+  --toast-warning-accent: #a66a14;
   --toast-border: #e8e3ed;
   --toast-foreground: #3c3542;
   pointer-events: none;
@@ -107,6 +112,10 @@ onBeforeUnmount(() => {
   border-inline-start-color: var(--toast-error-accent);
 }
 
+.toast--warning {
+  border-inline-start-color: var(--toast-warning-accent);
+}
+
 .toast-icon {
   display: grid;
   width: 2.15rem;
@@ -123,6 +132,12 @@ onBeforeUnmount(() => {
   color: var(--toast-error-accent);
   background: #f4f0f5;
   border-color: #e9e1ec;
+}
+
+.toast--warning .toast-icon {
+  color: var(--toast-warning-accent);
+  background: #fff5db;
+  border-color: #f1d59a;
 }
 
 .toast-icon svg {
