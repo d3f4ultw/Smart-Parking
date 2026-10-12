@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.correo.mensajes import (
     DatosActivacionCorreo,
     construir_datos_activacion,
+    construir_mensaje_invitacion_propietario,
 )
 from app.correo.smtp import (
     ConfiguracionSMTPInvalidaError,
@@ -130,6 +131,31 @@ def test_fabrica_solo_crea_transporte_smtp() -> None:
 
     assert isinstance(crear_transporte_correo(settings), SMTPTransport)
     assert cargar_configuracion_smtp(settings).from_email == "no-reply@example.test"
+
+
+def test_correo_propietario_indica_vigencia_del_enlace_y_formulario() -> None:
+    mensaje = construir_mensaje_invitacion_propietario(
+        correo_de_prueba(),
+        "a" * 64,
+        settings=settings_de_prueba(activation_challenge_ttl_minutes=15),
+    )
+
+    texto = mensaje.get_body(preferencelist=("plain",))
+    html = mensaje.get_body(preferencelist=("html",))
+    assert texto is not None
+    assert html is not None
+    assert "vigencia máxima de 15 minutos desde este envío" in texto.get_content()
+    assert "Abrirlo no reinicia el tiempo" in texto.get_content()
+    assert "cuantas veces necesites mientras siga vigente" in texto.get_content()
+    assert "solo se puede utilizar una vez" not in texto.get_content()
+    assert (
+        "La solicitud vence 60 minutos después del primer envío" in texto.get_content()
+    )
+    assert "Durante esa hora se permiten hasta 3 reenvíos" in texto.get_content()
+    assert "5 minutos entre envíos" in texto.get_content()
+    assert "Durante esa hora se permiten hasta 3 reenvíos" in html.get_content()
+    assert "Abrirlo no reinicia el tiempo" in html.get_content()
+    assert "cuantas veces necesites mientras siga vigente" in html.get_content()
 
 
 def test_configuracion_smtp_development_valida() -> None:

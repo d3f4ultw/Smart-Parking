@@ -18,7 +18,7 @@ export interface RespuestaLogin {
 export type RutaDespuesLogin = '/admin' | '/operador'
 
 export function obtenerRutaDespuesLogin(rol: RolUsuario): RutaDespuesLogin {
-  return rol === 'ADMIN' ? '/admin' : '/operador'
+  return rol === 'OPERADOR' ? '/operador' : '/admin'
 }
 
 export function validarDatosLogin(
@@ -75,6 +75,9 @@ export function obtenerEstadoErrorLogin(error: unknown): number | undefined {
 }
 
 export function mapearErrorLogin(status: number | undefined): string {
+  if (status === 403) {
+    return 'Esta cuenta no tiene acceso asignado.'
+  }
   if (status === 401) {
     return 'Correo o contraseña incorrectos.'
   }

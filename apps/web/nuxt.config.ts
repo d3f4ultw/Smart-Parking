@@ -6,6 +6,9 @@ export default defineNuxtConfig({
   modules: ['@nuxt/eslint'],
   runtimeConfig: {
     apiInternalBaseUrl: 'http://api-dev:8000',
+    public: {
+      managementOrigin: 'http://localhost:3000',
+    },
   },
   routeRules: {
     '/activar-cuenta': {
@@ -13,6 +16,22 @@ export default defineNuxtConfig({
       headers: {
         'Cache-Control': 'no-store',
         'Referrer-Policy': 'no-referrer',
+      },
+    },
+    '/admin/gestion-propietario': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
+    '/confirmar-desvinculacion': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
       },
     },
   },

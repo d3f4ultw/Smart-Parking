@@ -4,7 +4,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-import { crearControladorEventosTiempoReal } from '../app/utils/eventos-tiempo-real.ts'
+import { aplicarInstantaneaCajon } from '../app/utils/cajones.ts'
+import {
+  crearControladorEventosTiempoReal,
+  type InstantaneaEventoCajon,
+} from '../app/utils/eventos-tiempo-real.ts'
+import type { RespuestaListaCajones } from '../app/utils/cajones.ts'
 
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -98,6 +103,56 @@ function emitirOperador(
   )
 }
 
+function datosEventoCajon(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    recurso_tipo: 'cajon',
+    recurso_id: 3,
+    ocurrido_en: '2026-10-06T12:00:00Z',
+    datos: {
+      cajon_id: 3,
+      numero: 1,
+      estado_fisico: 'OCUPADO',
+      estado_operativo: 'DISPONIBLE',
+      motivo_operativo: null,
+      estado_efectivo: 'OCUPADO',
+      estado_fisico_actualizado_en: '2026-10-06T11:59:00Z',
+      estado_operativo_actualizado_en: '2026-10-06T10:00:00Z',
+      actualizado_en: '2026-10-06T11:59:00Z',
+      ...overrides,
+    },
+  })
+}
+
+function listaCajonesPrueba(cursor: string): RespuestaListaCajones {
+  return {
+    cursor_eventos: cursor,
+    cajones: [
+      {
+        id: 3,
+        numero: 1,
+        estado_fisico: 'LIBRE',
+        estado_operativo: 'DISPONIBLE',
+        motivo_operativo: null,
+        estado_fisico_actualizado_en: null,
+        estado_operativo_actualizado_en: '2026-10-06T10:00:00Z',
+        creado_en: '2026-10-01T10:00:00Z',
+        estado_efectivo: 'LIBRE',
+      },
+      {
+        id: 9,
+        numero: 8,
+        estado_fisico: 'DESCONOCIDO',
+        estado_operativo: 'DISPONIBLE',
+        motivo_operativo: null,
+        estado_fisico_actualizado_en: null,
+        estado_operativo_actualizado_en: '2026-10-06T10:00:00Z',
+        creado_en: '2026-10-01T10:00:00Z',
+        estado_efectivo: 'DESCONOCIDO',
+      },
+    ],
+  }
+}
+
 test('el controlador no abre durante SSR y crea una sola fuente por layout al iniciar', () => {
   const fuentes: FuenteEventosFalsa[] = []
   const controlador = crearControladorEventosTiempoReal({
@@ -168,6 +223,335 @@ test('la tabla recibe eventos tipados, descarta duplicados y los suscriptores nu
   assert.deepEqual(creacionesReproducidas, [[8, '12']])
   nuevaSuscripcion.detener()
   suscripcion.detener()
+  controlador.detener()
+})
+
+test('cajon.actualizado se entrega a su manejador y se reproduce desde el buffer', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const actualizacionesOperador: number[] = []
+  const actualizacionesCajon: Array<Record<string, unknown>> = []
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  const suscripcion = controlador.suscribir('10', {
+    ...manejadores(actualizacionesOperador),
+    alActualizarCajon: (datos) => actualizacionesCajon.push(datos),
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '11')
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '11')
+
+  assert.equal(actualizacionesCajon.length, 1)
+  assert.equal(actualizacionesCajon[0]?.cajon_id, 3)
+  assert.deepEqual(actualizacionesOperador, [])
+
+  const replayCajones: Array<Record<string, unknown>> = []
+  const replayOperadores: number[] = []
+  const replay = controlador.suscribir('10', {
+    ...manejadores(replayOperadores),
+    alActualizarCajon: (datos) => replayCajones.push(datos),
+  })
+  assert.equal(replayCajones.length, 1)
+  assert.deepEqual(replayOperadores, [])
+  replay.detener()
+  suscripcion.detener()
+  controlador.detener()
+})
+
+test('event IDs older than the last accepted event cannot regress the snapshot', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  let respuesta = listaCajonesPrueba('10')
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  const suscripcion = controlador.suscribir('10', {
+    ...manejadores(),
+    alActualizarCajon: (evento) => {
+      const resultado = aplicarInstantaneaCajon(respuesta, evento)
+      if (resultado.tipo === 'aplicada') {
+        respuesta = resultado.respuesta
+      }
+    },
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '12')
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({ estado_fisico: 'LIBRE', estado_efectivo: 'LIBRE' }),
+    '11',
+  )
+
+  assert.equal(respuesta.cajones[0]?.estado_efectivo, 'OCUPADO')
+  suscripcion.detener()
+  controlador.detener()
+})
+
+test('operational snapshots allow optional reasons and preserve event ordering', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const entregados: InstantaneaEventoCajon[] = []
+  let respuesta = listaCajonesPrueba('10')
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  const suscripcion = controlador.suscribir('10', {
+    ...manejadores(),
+    alActualizarCajon: (evento) => {
+      entregados.push(evento)
+      const resultado = aplicarInstantaneaCajon(respuesta, evento)
+      if (resultado.tipo === 'aplicada') {
+        respuesta = resultado.respuesta
+      }
+    },
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'MANTENIMIENTO',
+      motivo_operativo: null,
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'FUERA_DE_SERVICIO',
+      motivo_operativo: null,
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '12',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'DISPONIBLE',
+      motivo_operativo: null,
+      estado_efectivo: 'OCUPADO',
+    }),
+    '13',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'DISPONIBLE',
+      motivo_operativo: null,
+      estado_efectivo: 'OCUPADO',
+    }),
+    '13',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'MANTENIMIENTO',
+      motivo_operativo: null,
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '11',
+  )
+
+  assert.deepEqual(
+    entregados.map(({ estado_operativo, motivo_operativo }) => [
+      estado_operativo,
+      motivo_operativo,
+    ]),
+    [
+      ['MANTENIMIENTO', null],
+      ['FUERA_DE_SERVICIO', null],
+      ['DISPONIBLE', null],
+    ],
+  )
+  assert.equal(respuesta.cajones[0]?.estado_operativo, 'DISPONIBLE')
+  assert.equal(respuesta.cajones[0]?.estado_efectivo, 'OCUPADO')
+  suscripcion.detener()
+  controlador.detener()
+})
+
+test('an event received while the initial GET is pending is replayed after its list cursor is installed', async () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+
+  let resolverGET!: (respuesta: RespuestaListaCajones) => void
+  const getPendiente = new Promise<RespuestaListaCajones>((resolver) => {
+    resolverGET = resolver
+  })
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '11')
+  resolverGET(listaCajonesPrueba('10'))
+
+  let respuesta = await getPendiente
+  const suscripcion = controlador.suscribir(respuesta.cursor_eventos, {
+    ...manejadores(),
+    alActualizarCajon: (evento) => {
+      const resultado = aplicarInstantaneaCajon(respuesta, evento)
+      if (resultado.tipo === 'aplicada') {
+        respuesta = resultado.respuesta
+      }
+    },
+  })
+
+  assert.equal(respuesta.cajones[0]?.estado_efectivo, 'OCUPADO')
+  assert.equal(respuesta.cajones[1]?.estado_efectivo, 'DESCONOCIDO')
+  assert.equal(respuesta.cursor_eventos, '10')
+  suscripcion.detener()
+  controlador.detener()
+})
+
+test('a newer event during manual refresh replays after the stale GET response', async () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  let respuesta = listaCajonesPrueba('10')
+  const crearManejadoresCajones = () => ({
+    ...manejadores(),
+    alActualizarCajon: (evento: InstantaneaEventoCajon) => {
+      const resultado = aplicarInstantaneaCajon(respuesta, evento)
+      if (resultado.tipo === 'aplicada') {
+        respuesta = resultado.respuesta
+      }
+    },
+  })
+  const suscripcionInicial = controlador.suscribir('10', crearManejadoresCajones())
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+
+  let resolverGET!: (nuevaRespuesta: RespuestaListaCajones) => void
+  const getPendiente = new Promise<RespuestaListaCajones>((resolver) => {
+    resolverGET = resolver
+  })
+  suscripcionInicial.detener()
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '11')
+  resolverGET(listaCajonesPrueba('10'))
+  respuesta = await getPendiente
+  const suscripcionReanudada = controlador.suscribir(
+    respuesta.cursor_eventos,
+    crearManejadoresCajones(),
+  )
+
+  assert.equal(respuesta.cajones[0]?.estado_efectivo, 'OCUPADO')
+  assert.equal(respuesta.cajones[1]?.estado_efectivo, 'DESCONOCIDO')
+  suscripcionReanudada.detener()
+  controlador.detener()
+})
+
+test('cajon.actualizado descarta payloads invalidos y recursos incongruentes', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const cajones: number[] = []
+  const operadores: number[] = []
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  controlador.suscribir('10', {
+    ...manejadores(operadores),
+    alActualizarCajon: (datos) => cajones.push(datos.cajon_id),
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+  fuente.emitir(
+    'cajon.actualizado',
+    JSON.stringify({
+      recurso_tipo: 'operador',
+      recurso_id: 3,
+      ocurrido_en: '2026-10-06T12:00:00Z',
+      datos: JSON.parse(datosEventoCajon()).datos,
+    }),
+    '11',
+  )
+  fuente.emitir('cajon.actualizado', datosEventoCajon({ cajon_id: 4 }), '11')
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({ estado_efectivo: 'LIBRE' }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'DISPONIBLE',
+      motivo_operativo: 'Cierre solicitado',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'MANTENIMIENTO',
+      motivo_operativo: '   ',
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'FUERA_DE_SERVICIO',
+      motivo_operativo: 'x'.repeat(251),
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({
+      estado_operativo: 'MANTENIMIENTO',
+      motivo_operativo: 17,
+      estado_efectivo: 'NO_DISPONIBLE',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'cajon.actualizado',
+    datosEventoCajon({ filtrado: 'dato inesperado' }),
+    '11',
+  )
+  assert.deepEqual(cajones, [])
+  assert.deepEqual(operadores, [])
+
+  fuente.emitir('cajon.actualizado', datosEventoCajon(), '11')
+  assert.deepEqual(cajones, [3])
+  assert.deepEqual(operadores, [])
   controlador.detener()
 })
 

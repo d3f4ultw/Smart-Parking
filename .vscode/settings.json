@@ -2,5 +2,9 @@
   "python.analysis.diagnosticSeverityOverrides": {
     "reportMissingModuleSource": "none"
   },
-  "python-envs.defaultEnvManager": "ms-python.python:system"
+  "python-envs.defaultEnvManager": "ms-python.python:system",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/firmware/esp32/parking_slot",
+    "${env:LOCALAPPDATA}/Python/pythoncore-3.14-64/Lib/site-packages/stubs"
+  ]
 }

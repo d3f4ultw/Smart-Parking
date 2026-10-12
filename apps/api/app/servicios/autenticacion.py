@@ -33,11 +33,15 @@ class ResultadoSesionUsuario:
     token: str = field(repr=False)
 
 
+class CuentaSinAccesoAsignadoError(ValueError):
+    """Indica que la cuenta autentica no tiene un rol operativo asignado."""
+
+
 def _cuenta_admin_utilizable(usuario: Usuario) -> bool:
     """Indica si el estado persistido permite validar un login de ADMIN."""
 
     return (
-        usuario.rol == RolUsuario.ADMIN.value
+        usuario.rol in {RolUsuario.ADMIN.value, RolUsuario.OWNER.value}
         and usuario.esta_activo
         and usuario.correo_verificado
         and not usuario.debe_cambiar_contrasena
@@ -45,11 +49,18 @@ def _cuenta_admin_utilizable(usuario: Usuario) -> bool:
     )
 
 
-def _cuenta_usuario_utilizable(usuario: Usuario) -> bool:
+def _cuenta_usuario_utilizable(
+    usuario: Usuario,
+    *,
+    permitir_sin_rol: bool = False,
+) -> bool:
     """Indica si el estado persistido permite iniciar una sesión."""
 
     return (
-        usuario.rol in {rol.value for rol in RolUsuario}
+        (
+            usuario.rol in {rol.value for rol in RolUsuario}
+            or (permitir_sin_rol and usuario.rol is None)
+        )
         and usuario.esta_activo
         and usuario.correo_verificado
         and not usuario.debe_cambiar_contrasena
@@ -65,6 +76,7 @@ def _autenticar_usuario(
     correo_normalizado: str | None = None,
     rol_requerido: RolUsuario | None = None,
     bloquear_fila: bool = False,
+    permitir_sin_rol: bool = False,
 ) -> Usuario | None:
     """Devuelve la cuenta elegible tras validar su contraseña."""
 
@@ -80,8 +92,19 @@ def _autenticar_usuario(
     if (
         usuario is None
         or contrasena_hash is None
-        or not _cuenta_usuario_utilizable(usuario)
-        or (rol_requerido is not None and usuario.rol != rol_requerido.value)
+        or not _cuenta_usuario_utilizable(
+            usuario,
+            permitir_sin_rol=permitir_sin_rol,
+        )
+        or (
+            rol_requerido is not None
+            and usuario.rol
+            not in (
+                {RolUsuario.ADMIN.value, RolUsuario.OWNER.value}
+                if rol_requerido == RolUsuario.ADMIN
+                else {rol_requerido.value}
+            )
+        )
     ):
         # Mantenemos un costo similar cuando la cuenta no puede autenticarse.
         verificar_contrasena(contrasena, HASH_DUMMY_CONTRASENA)
@@ -171,7 +194,7 @@ def crear_sesion_usuario(
     duracion_minutos: int,
     ahora: datetime | None = None,
 ) -> ResultadoSesionUsuario | None:
-    """Autentica ADMIN u OPERADOR y persiste una sesión común."""
+    """Autentica cualquier rol permitido y persiste una sesión común."""
 
     usuario = _autenticar_usuario(
         db,
@@ -179,10 +202,14 @@ def crear_sesion_usuario(
         contrasena=contrasena,
         correo_normalizado=correo_normalizado,
         bloquear_fila=True,
+        permitir_sin_rol=True,
     )
     if usuario is None:
         db.rollback()
         return None
+    if usuario.rol is None:
+        db.rollback()
+        raise CuentaSinAccesoAsignadoError
 
     ahora_utc = ahora or datetime.now(UTC)
     token = generar_token_sesion()
@@ -339,6 +366,7 @@ def revocar_sesiones_usuario(
 __all__ = [
     "ResultadoSesionAdmin",
     "ResultadoSesionUsuario",
+    "CuentaSinAccesoAsignadoError",
     "autenticar_admin",
     "crear_sesion_admin",
     "crear_sesion_usuario",

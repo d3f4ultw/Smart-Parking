@@ -19,13 +19,22 @@ from app.models import (
 )
 from app.servicios.autenticacion import obtener_usuario_por_token
 
-TipoEventoTiempoReal = Literal["operador.creado", "operador.actualizado"]
-RolTiempoReal = Literal["ADMIN", "OPERADOR"]
+TipoEventoOperador = Literal["operador.creado", "operador.actualizado"]
+TipoEventoTiempoReal = Literal[
+    "operador.creado",
+    "operador.actualizado",
+    "cajon.actualizado",
+]
+RolTiempoReal = Literal["ADMIN", "OPERADOR", "OWNER"]
 
-TIPOS_EVENTO_TIEMPO_REAL = frozenset({"operador.creado", "operador.actualizado"})
+TIPOS_EVENTO_OPERADOR = frozenset({"operador.creado", "operador.actualizado"})
+TIPOS_EVENTO_CAJON = frozenset({"cajon.actualizado"})
+TIPOS_EVENTO_ADMIN = TIPOS_EVENTO_OPERADOR | TIPOS_EVENTO_CAJON
+TIPOS_EVENTO_TIEMPO_REAL = TIPOS_EVENTO_ADMIN
 EVENTOS_POR_ROL: dict[str, frozenset[str]] = {
-    "ADMIN": TIPOS_EVENTO_TIEMPO_REAL,
-    "OPERADOR": frozenset(),
+    "ADMIN": TIPOS_EVENTO_ADMIN,
+    "OPERADOR": TIPOS_EVENTO_CAJON,
+    "OWNER": TIPOS_EVENTO_TIEMPO_REAL,
 }
 ROLES_STREAM = frozenset(EVENTOS_POR_ROL)
 MAXIMO_EVENTOS_RETENIDOS = 10_000
@@ -37,11 +46,9 @@ VENTANA_APERTURAS = timedelta(seconds=60)
 DURACION_CONCESION = timedelta(seconds=45)
 EDAD_LIMPIEZA_CONCESION = timedelta(minutes=5)
 
-# Compatibilidad temporal para imports de las pruebas y del codigo de dominio
-# que aun nombra el evento productor por su recurso de OPERADOR.
+# Compatibilidad temporal para imports que aun nombran el productor OPERADOR.
 MAXIMO_CONEXIONES_ADMIN = MAXIMO_CONEXIONES_SSE
 MAXIMAS_APERTURAS_ADMIN = MAXIMAS_APERTURAS_SSE
-TipoEventoOperador = TipoEventoTiempoReal
 
 
 class SesionTiempoRealNoValidaError(ValueError):
@@ -68,6 +75,7 @@ class EventoSSE:
     recurso_tipo: str
     recurso_id: int
     ocurrido_en: str
+    datos: dict[str, object] | None = None
 
     @property
     def operador_id(self) -> int:
@@ -107,14 +115,17 @@ def registrar_evento_tiempo_real(
     recurso_tipo: str,
     recurso_id: int,
     tipo: TipoEventoTiempoReal,
+    datos: dict[str, object] | None = None,
 ) -> EventoTiempoReal:
     """Asigna el cursor global dentro de la transaccion de la mutacion."""
 
-    if (
-        recurso_tipo != "operador"
-        or tipo not in TIPOS_EVENTO_TIEMPO_REAL
-        or recurso_id <= 0
-    ):
+    combinacion_operador = (
+        recurso_tipo == "operador" and tipo in TIPOS_EVENTO_OPERADOR and datos is None
+    )
+    combinacion_cajon = (
+        recurso_tipo == "cajon" and tipo == "cajon.actualizado" and datos is not None
+    )
+    if recurso_id <= 0 or not (combinacion_operador or combinacion_cajon):
         raise ValueError("El evento de tiempo real no es valido.")
 
     ultimo_id = db.scalar(
@@ -131,6 +142,7 @@ def registrar_evento_tiempo_real(
         recurso_tipo=recurso_tipo,
         recurso_id=recurso_id,
         tipo=tipo,
+        datos=dict(datos) if datos is not None else None,
     )
     db.add(evento)
     db.flush()
@@ -162,7 +174,7 @@ def registrar_evento_tiempo_real(
 def registrar_evento_operador(
     db: Session,
     operador_id: int,
-    tipo: TipoEventoTiempoReal,
+    tipo: TipoEventoOperador,
 ) -> EventoTiempoReal:
     """Registra una notificacion de OPERADOR en el journal compartido."""
 
@@ -174,21 +186,29 @@ def registrar_evento_operador(
     )
 
 
-def obtener_marca_eventos(
+def registrar_evento_cajon(
     db: Session,
-    tipos_autorizados: frozenset[str] | None = None,
-) -> tuple[int, int | None]:
-    """Devuelve el high-water y el evento retenido mas antiguo autorizado."""
+    cajon_id: int,
+    datos: dict[str, object],
+) -> EventoTiempoReal:
+    """Registra una instantanea de cajon en la misma transaccion de estado."""
+
+    return registrar_evento_tiempo_real(
+        db,
+        recurso_tipo="cajon",
+        recurso_id=cajon_id,
+        tipo="cajon.actualizado",
+        datos=datos,
+    )
+
+
+def obtener_marca_eventos(db: Session) -> tuple[int, int | None]:
+    """Devuelve el high-water y el evento retenido mas antiguo global."""
 
     estado = db.get(EstadoEventosTiempoReal, 1)
     if estado is None:
         raise RuntimeError("No existe la fila singleton del journal en tiempo real.")
-    consulta = select(func.min(EventoTiempoReal.id))
-    if tipos_autorizados is not None:
-        if not tipos_autorizados:
-            return estado.ultimo_id, None
-        consulta = consulta.where(EventoTiempoReal.tipo.in_(tipos_autorizados))
-    primero = db.scalar(consulta)
+    primero = db.scalar(select(func.min(EventoTiempoReal.id)))
     return estado.ultimo_id, primero
 
 
@@ -398,7 +418,7 @@ def consultar_lote_eventos_usuario(
             lease.expira_en = ahora_utc + DURACION_CONCESION
 
         tipos_autorizados = tipos_autorizados_para_rol(rol_actual)
-        marca, primer_evento = obtener_marca_eventos(db, tipos_autorizados)
+        marca, primer_evento = obtener_marca_eventos(db)
         if tipos_autorizados and cursor_necesita_resync(
             cursor,
             marca,
@@ -434,6 +454,7 @@ def consultar_lote_eventos_usuario(
                 recurso_tipo=fila.recurso_tipo,
                 recurso_id=fila.recurso_id,
                 ocurrido_en=fila.ocurrido_en.isoformat(),
+                datos=fila.datos,
             )
             for fila in filas
         )
@@ -524,6 +545,8 @@ __all__ = [
     "SesionTiempoRealNoValidaError",
     "SesionAdminSSENoValidaError",
     "TIPOS_EVENTO_TIEMPO_REAL",
+    "TIPOS_EVENTO_CAJON",
+    "TIPOS_EVENTO_OPERADOR",
     "TipoEventoTiempoReal",
     "TipoEventoOperador",
     "admitir_conexion_sse",
@@ -535,6 +558,7 @@ __all__ = [
     "cursor_necesita_resync",
     "obtener_marca_eventos",
     "registrar_evento_operador",
+    "registrar_evento_cajon",
     "registrar_evento_tiempo_real",
     "tipos_autorizados_para_rol",
 ]

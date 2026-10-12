@@ -502,6 +502,70 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
     assert leases[0].cerrada_en is not None
 
 
+def test_sse_incluye_instantanea_durable_de_cajon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instantanea = {
+        "cajon_id": 1,
+        "numero": 1,
+        "estado_fisico": "OCUPADO",
+        "estado_operativo": "DISPONIBLE",
+        "motivo_operativo": None,
+        "estado_efectivo": "OCUPADO",
+        "estado_fisico_actualizado_en": "2026-10-06T12:00:00+00:00",
+        "estado_operativo_actualizado_en": "2026-10-06T12:00:00+00:00",
+        "actualizado_en": "2026-10-06T12:00:00+00:00",
+    }
+    evento = EventoSSE(
+        id=2,
+        tipo="cajon.actualizado",
+        recurso_tipo="cajon",
+        recurso_id=1,
+        ocurrido_en="2026-10-06T12:00:00+00:00",
+        datos=instantanea,
+    )
+    lote = ResultadoLoteEventosSSE(
+        autorizado=True,
+        marca=2,
+        eventos=(evento,),
+        cursor_escaneado=2,
+    )
+    monkeypatch.setattr(
+        rutas_eventos,
+        "_consultar_lote_en_sesion",
+        lambda **_argumentos: lote,
+    )
+
+    async def cerrar(_contexto: object) -> None:
+        return None
+
+    monkeypatch.setattr(rutas_eventos, "_cerrar_lease_sse", cerrar)
+    contexto = rutas_eventos.ContextoStreamTiempoReal(
+        usuario_id=1,
+        rol_usuario="ADMIN",
+        token_sesion="token-sintetico-de-prueba",
+        lease_id=uuid4(),
+        cursor=0,
+        marca_inicial=0,
+        requiere_resync=False,
+    )
+
+    async def recibir() -> ServerSentEvent:
+        generador = rutas_eventos._generar_eventos_tiempo_real(contexto)
+        respuesta = await anext(generador)
+        await generador.aclose()
+        return respuesta
+
+    recibido = asyncio.run(recibir())
+    assert recibido.event == "cajon.actualizado"
+    assert recibido.data == {
+        "recurso_tipo": "cajon",
+        "recurso_id": 1,
+        "ocurrido_en": "2026-10-06T12:00:00+00:00",
+        "datos": instantanea,
+    }
+
+
 def test_sesion_operador_no_puede_ampliar_su_politica_con_query_ni_headers(
     db: Session,
     client: TestClient,

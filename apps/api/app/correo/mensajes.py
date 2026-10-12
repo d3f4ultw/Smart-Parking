@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formataddr
 from html import escape
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 from app.core.config import Settings, get_settings
 from app.correo.errores import ConfiguracionSMTPInvalidaError
@@ -22,6 +23,8 @@ from app.servicios.activaciones import (
 ASUNTO_ACTIVACION = "Activa tu cuenta de administrador - Smart Parking"
 ASUNTO_INVITACION_ADMIN = "Activa tu cuenta de administrador - Smart Parking"
 ASUNTO_INVITACION_OPERADOR = "Activa tu cuenta de operador - Smart Parking"
+ASUNTO_INVITACION_PROPIETARIO = "Verifica el registro OWNER - Smart Parking"
+ASUNTO_DESVINCULACION_PROPIETARIO = "Confirma la desvinculación de tu cuenta OWNER"
 ASUNTO_REGENERACION_CREDENCIALES_OPERADOR = "Contraseña regenerada - Smart Parking"
 
 
@@ -107,6 +110,62 @@ def construir_url_invitacion_cuenta(
             path,
             urlencode({"token": token}),
             "",
+        )
+    )
+
+
+def construir_url_invitacion_propietario(
+    token: str,
+    public_url: str | None = None,
+) -> str:
+    """Construye el enlace de primer registro OWNER con token opaco."""
+
+    base = (public_url or get_settings().app_public_url).strip()
+    partes = urlsplit(base)
+    if (
+        partes.scheme not in {"http", "https"}
+        or not partes.netloc
+        or partes.query
+        or partes.fragment
+        or not token
+    ):
+        raise ConfiguracionSMTPInvalidaError
+
+    return urlunsplit(
+        (
+            partes.scheme,
+            partes.netloc,
+            f"{partes.path.rstrip('/')}/activar-propietario",
+            urlencode({"token": token}),
+            "",
+        )
+    )
+
+
+def construir_url_confirmacion_desvinculacion(
+    token: str,
+    public_url: str | None = None,
+) -> str:
+    """Construye el enlace de confirmacion con el token solo en el fragmento."""
+
+    base = (public_url or get_settings().app_public_url).strip()
+    partes = urlsplit(base)
+    if (
+        partes.scheme not in {"http", "https"}
+        or not partes.netloc
+        or partes.query
+        or partes.fragment
+        or not re.fullmatch(r"[A-Za-z0-9_-]{43,64}", token)
+    ):
+        raise ConfiguracionSMTPInvalidaError
+
+    return urlunsplit(
+        (
+            partes.scheme,
+            partes.netloc,
+            f"{partes.path.rstrip('/')}/confirmar-desvinculacion",
+            "",
+            f"desvincular={quote(token, safe='')}",
         )
     )
 
@@ -314,6 +373,116 @@ def construir_mensaje_invitacion_cuenta(
     return mensaje
 
 
+def construir_mensaje_invitacion_propietario(
+    correo: str,
+    token: str,
+    *,
+    settings: Settings | None = None,
+) -> EmailMessage:
+    """Construye el correo con vigencia del enlace y desafio de registro."""
+
+    valores = settings or get_settings()
+    from_email = (valores.smtp_from_email or "").strip()
+    from_name = valores.smtp_from_name.strip()
+    if (
+        not from_email
+        or not from_name
+        or any(caracter in from_name for caracter in "\r\n")
+    ):
+        raise ConfiguracionSMTPInvalidaError
+    from_email = _normalizar_remitente(from_email, valores)
+    enlace = construir_url_invitacion_propietario(token, valores.app_public_url)
+    texto = (
+        "Smart Parking\n\n"
+        "Se solicitó verificar este correo para registrar el primer OWNER.\n\n"
+        "Verifica el correo y continúa el registro desde este enlace:\n"
+        f"{enlace}\n\n"
+        "El enlace tiene una vigencia máxima de 15 minutos desde este envío. "
+        "Puedes volver a abrirlo cuantas veces necesites mientras siga vigente; "
+        "Abrirlo no reinicia el tiempo.\n"
+        "La solicitud vence 60 minutos después del primer envío. Durante esa "
+        "hora se permiten hasta 3 reenvíos, con 5 minutos entre envíos.\n"
+        "Completa el registro antes de que venza el enlace.\n"
+        "Si no solicitaste este registro, ignora este mensaje.\n"
+    )
+    html = (
+        "<!doctype html><html><body>"
+        "<p>Smart Parking</p>"
+        "<p>Se solicitó verificar este correo para registrar el primer OWNER.</p>"
+        f'<p><a href="{escape(enlace, quote=True)}">'
+        "Verificar correo y continuar</a></p>"
+        "<p>El enlace tiene una vigencia máxima de 15 minutos desde este envío. "
+        "Puedes volver a abrirlo cuantas veces necesites mientras siga vigente; "
+        "Abrirlo no reinicia el tiempo.</p>"
+        "<p>La solicitud vence 60 minutos después del primer envío. Durante "
+        "esa hora se permiten hasta 3 reenvíos, con 5 minutos entre envíos.</p>"
+        "<p>Completa el registro antes de que venza el enlace.</p>"
+        "<p>Si no solicitaste este registro, ignora este mensaje.</p>"
+        "</body></html>"
+    )
+    mensaje = EmailMessage()
+    mensaje["Subject"] = ASUNTO_INVITACION_PROPIETARIO
+    mensaje["From"] = formataddr((from_name, from_email))
+    mensaje["To"] = correo
+    mensaje.set_content(texto)
+    mensaje.add_alternative(html, subtype="html")
+    return mensaje
+
+
+def construir_mensaje_confirmacion_desvinculacion_propietario(
+    correo: str,
+    token: str,
+    *,
+    settings: Settings | None = None,
+) -> EmailMessage:
+    """Construye el correo de confirmacion automatica de desvinculacion."""
+
+    valores = settings or get_settings()
+    from_email = (valores.smtp_from_email or "").strip()
+    from_name = valores.smtp_from_name.strip()
+    if (
+        not from_email
+        or not from_name
+        or any(caracter in from_name for caracter in "\r\n")
+    ):
+        raise ConfiguracionSMTPInvalidaError
+    from_email = _normalizar_remitente(from_email, valores)
+    enlace = construir_url_confirmacion_desvinculacion(
+        token,
+        valores.app_public_url,
+    )
+    texto = (
+        "Smart Parking\n\n"
+        "Se solicitó desvincular esta cuenta de OWNER.\n\n"
+        "Abre este enlace para completar la desvinculación automáticamente. "
+        "El enlace vence en 15 minutos y solo puede usarse una vez:\n"
+        f"{enlace}\n\n"
+        "La cuenta y su historial se conservarán, pero perderá el acceso "
+        "operativo asignado.\n"
+        "Si no solicitaste esta acción, ignora este mensaje.\n"
+    )
+    html = (
+        "<!doctype html><html><body>"
+        "<p>Smart Parking</p>"
+        "<p>Se solicitó desvincular esta cuenta de OWNER.</p>"
+        f'<p><a href="{escape(enlace, quote=True)}">'
+        "Completar desvinculación</a></p>"
+        "<p>El enlace vence en 15 minutos y solo puede usarse una vez. "
+        "Al abrirlo, la desvinculación se completará automáticamente.</p>"
+        "<p>La cuenta y su historial se conservarán, pero perderá el acceso "
+        "operativo asignado.</p>"
+        "<p>Si no solicitaste esta acción, ignora este mensaje.</p>"
+        "</body></html>"
+    )
+    mensaje = EmailMessage()
+    mensaje["Subject"] = ASUNTO_DESVINCULACION_PROPIETARIO
+    mensaje["From"] = formataddr((from_name, from_email))
+    mensaje["To"] = correo
+    mensaje.set_content(texto)
+    mensaje.add_alternative(html, subtype="html")
+    return mensaje
+
+
 def construir_mensaje_regeneracion_credenciales_operador(
     usuario: Usuario,
     contrasena: str,
@@ -383,14 +552,20 @@ __all__ = [
     "ASUNTO_ACTIVACION",
     "ASUNTO_INVITACION_ADMIN",
     "ASUNTO_INVITACION_OPERADOR",
+    "ASUNTO_INVITACION_PROPIETARIO",
+    "ASUNTO_DESVINCULACION_PROPIETARIO",
     "ASUNTO_REGENERACION_CREDENCIALES_OPERADOR",
     "DatosActivacionCorreo",
     "construir_mensaje_invitacion_cuenta",
+    "construir_mensaje_invitacion_propietario",
+    "construir_mensaje_confirmacion_desvinculacion_propietario",
+    "construir_url_confirmacion_desvinculacion",
     "construir_mensaje_invitacion_operador",
     "construir_mensaje_regeneracion_credenciales_operador",
     "construir_mensaje_activacion",
     "construir_datos_activacion",
     "construir_url_activacion",
     "construir_url_invitacion_cuenta",
+    "construir_url_invitacion_propietario",
     "construir_url_invitacion_operador",
 ]

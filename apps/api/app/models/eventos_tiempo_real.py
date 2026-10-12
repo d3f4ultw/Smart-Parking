@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column, synonym
 
@@ -40,8 +41,14 @@ class EventoTiempoReal(Base):
     __tablename__ = "eventos_tiempo_real"
     __table_args__ = (
         CheckConstraint(
-            "tipo IN ('operador.creado', 'operador.actualizado')",
+            "(recurso_tipo = 'operador' AND "
+            "tipo IN ('operador.creado', 'operador.actualizado')) OR "
+            "(recurso_tipo = 'cajon' AND tipo = 'cajon.actualizado')",
             name="ck_eventos_tiempo_real_tipo",
+        ),
+        CheckConstraint(
+            "recurso_tipo <> 'cajon' OR datos IS NOT NULL",
+            name="ck_eventos_tiempo_real_datos_cajon",
         ),
         Index("ix_eventos_tiempo_real_ocurrido_en", "ocurrido_en"),
         Index("ix_eventos_tiempo_real_tipo_id", "tipo", "id"),
@@ -57,6 +64,7 @@ class EventoTiempoReal(Base):
     recurso_id: Mapped[int] = mapped_column(Integer, nullable=False)
     operador_id = synonym("recurso_id")
     tipo: Mapped[str] = mapped_column(String(64), nullable=False)
+    datos: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     ocurrido_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

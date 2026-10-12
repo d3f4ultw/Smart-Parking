@@ -1,8 +1,11 @@
 """Dependencias reutilizables para proteger rutas de la API."""
 
+import re
+import secrets
 from typing import Annotated, NoReturn
 
 from fastapi import Depends, HTTPException, Request, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -13,6 +16,8 @@ from app.servicios.autenticacion import obtener_usuario_por_token
 
 DETALLE_SESION_NO_AUTENTICADA = "No autenticado"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
+_ESQUEMA_BEARER_DISPOSITIVO = HTTPBearer(auto_error=False)
+_FORMATO_TOKEN_DISPOSITIVO = re.compile(r"[A-Za-z0-9_-]{43,}")
 
 
 def _error_sesion_no_autenticada() -> NoReturn:
@@ -49,4 +54,119 @@ def exigir_operador(
     return usuario
 
 
-__all__ = ["exigir_operador"]
+def exigir_personal(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> int:
+    """Valida la sesion persistida de ADMIN, OWNER u OPERADOR."""
+
+    response.headers.update(CABECERA_NO_CACHE)
+    token = request.cookies.get(get_settings().session_cookie_name)
+    if not token:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    try:
+        usuario = obtener_usuario_por_token(db, token=token)
+    except SQLAlchemyError:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    if usuario is None or usuario.rol not in {
+        RolUsuario.ADMIN.value,
+        RolUsuario.OWNER.value,
+        RolUsuario.OPERADOR.value,
+    }:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    usuario_id = usuario.id
+    db.rollback()
+    return usuario_id
+
+
+def exigir_admin(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> int:
+    """Valida la sesion persistida y devuelve el id del ADMIN confiable."""
+
+    response.headers.update(CABECERA_NO_CACHE)
+    token = request.cookies.get(get_settings().session_cookie_name)
+    if not token:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    try:
+        usuario = obtener_usuario_por_token(db, token=token)
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno",
+            headers=CABECERA_NO_CACHE,
+        ) from None
+
+    if usuario is None:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    usuario_id = usuario.id
+    es_admin = usuario.rol in {
+        RolUsuario.ADMIN.value,
+        RolUsuario.OWNER.value,
+    }
+    db.rollback()
+    if not es_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado",
+            headers=CABECERA_NO_CACHE,
+        )
+    return usuario_id
+
+
+def _error_dispositivo_no_autenticado() -> NoReturn:
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="No autenticado",
+        headers={**CABECERA_NO_CACHE, "WWW-Authenticate": "Bearer"},
+    )
+
+
+def exigir_dispositivo(
+    response: Response,
+    credenciales: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_ESQUEMA_BEARER_DISPOSITIVO),
+    ],
+) -> None:
+    """Autoriza solo el bearer configurado para reportes fisicos ESP32."""
+
+    response.headers.update(CABECERA_NO_CACHE)
+    configurado = get_settings().esp32_bearer_token
+    secreto = configurado.get_secret_value() if configurado is not None else ""
+    if not _FORMATO_TOKEN_DISPOSITIVO.fullmatch(secreto):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="La API del dispositivo no esta disponible",
+            headers=CABECERA_NO_CACHE,
+        )
+
+    if (
+        credenciales is None
+        or credenciales.scheme.lower() != "bearer"
+        or not credenciales.credentials.isascii()
+        or not secrets.compare_digest(credenciales.credentials, secreto)
+    ):
+        _error_dispositivo_no_autenticado()
+
+
+__all__ = [
+    "exigir_admin",
+    "exigir_dispositivo",
+    "exigir_operador",
+    "exigir_personal",
+]

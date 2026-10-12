@@ -15,13 +15,25 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import Settings
 from app.models import (
     ActivacionCuenta,
+    Cajon,
     ConexionSSEAdmin,
+    ConfiguracionEstacionamiento,
+    CuentaPropietario,
+    DesvinculacionPropietario,
     EstadoEventosOperadores,
     EventoOperador,
+    HistorialModalidadEstacionamiento,
+    InscripcionPropietario,
     Sesion,
+    SesionGestionPropietario,
     Usuario,
 )
-from app.seguridad.limitador import limitador_activaciones, limitador_autenticacion
+from app.seguridad.limitador import (
+    limitador_activaciones,
+    limitador_autenticacion,
+    limitador_confirmacion_desvinculacion,
+    limitador_solicitud_desvinculacion,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,9 +44,13 @@ def estado_rate_limit_aislado() -> Generator[None]:
 
     limitador_activaciones.reiniciar()
     limitador_autenticacion.reiniciar()
+    limitador_confirmacion_desvinculacion.reiniciar()
+    limitador_solicitud_desvinculacion.reiniciar()
     yield
     limitador_activaciones.reiniciar()
     limitador_autenticacion.reiniciar()
+    limitador_confirmacion_desvinculacion.reiniciar()
+    limitador_solicitud_desvinculacion.reiniciar()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -125,10 +141,26 @@ def db(database_url: URL) -> Generator[Session]:
     finally:
         session.rollback()
         session.execute(delete(Sesion))
+        session.execute(delete(SesionGestionPropietario))
+        session.execute(delete(DesvinculacionPropietario))
         session.execute(delete(ActivacionCuenta))
+        session.execute(delete(InscripcionPropietario))
+        session.execute(delete(CuentaPropietario))
         session.execute(delete(ConexionSSEAdmin))
         session.execute(delete(EventoOperador))
+        session.execute(delete(HistorialModalidadEstacionamiento))
+        session.execute(delete(ConfiguracionEstacionamiento))
         session.execute(delete(Usuario))
+        session.execute(delete(Cajon).where(Cajon.numero > 8))
+        session.execute(
+            update(Cajon).values(
+                estado_fisico="DESCONOCIDO",
+                estado_operativo="DISPONIBLE",
+                motivo_operativo=None,
+                estado_fisico_actualizado_en=None,
+                estado_operativo_actualizado_en=Cajon.creado_en,
+            )
+        )
         session.execute(
             update(EstadoEventosOperadores)
             .where(EstadoEventosOperadores.id == 1)
