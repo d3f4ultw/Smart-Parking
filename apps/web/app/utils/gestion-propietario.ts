@@ -35,6 +35,22 @@ export type PanelGestionProps = {
 
 export type AccionGestionPropietario = 'registrar' | 'desvincular' | 'estado'
 
+export function mantenerSesionActivaAnteErrorTransitorio(
+  sesionActiva: boolean,
+  error: unknown,
+): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return sesionActiva
+  }
+
+  const respuesta = error as { status?: unknown; statusCode?: unknown }
+  if (respuesta.status === 401 || respuesta.statusCode === 401) {
+    return false
+  }
+
+  return sesionActiva
+}
+
 export const ACCIONES_GESTION_PROPIETARIO = [
   { id: 'registrar', nombre: 'Registrar dueño', disponible: true },
   { id: 'desvincular', nombre: 'Desvincular dueño', disponible: true },

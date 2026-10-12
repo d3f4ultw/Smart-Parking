@@ -6,6 +6,7 @@ import ConsultarEstado from '~/components/gestion-propietario/ConsultarEstado.vu
 import DesvincularPropietario from '~/components/gestion-propietario/DesvincularPropietario.vue'
 import Navegacion from '~/components/gestion-propietario/Navegacion.vue'
 import RegistrarPropietario from '~/components/gestion-propietario/RegistrarPropietario.vue'
+import { mantenerSesionActivaAnteErrorTransitorio } from '~/utils/gestion-propietario'
 import type {
   AccionGestionPropietario,
   EstadoGestionPropietario,
@@ -191,8 +192,11 @@ async function sincronizarSesion() {
       { retry: 0 },
     )
     sesionActiva.value = respuesta.activa
-  } catch {
-    sesionActiva.value = false
+  } catch (error: unknown) {
+    sesionActiva.value = mantenerSesionActivaAnteErrorTransitorio(
+      sesionActiva.value,
+      error,
+    )
   }
 
   if (sesionActiva.value) {
