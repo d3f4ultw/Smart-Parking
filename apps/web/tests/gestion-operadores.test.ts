@@ -376,3 +376,64 @@ test('la busqueda global se carga desde el servidor y reinicia la pagina', () =>
   assert.match(page, /Página \{\{ paginaMostrada \}\} de \{\{ Math\.max\(data\.total_paginas, 1\) \}\}/)
   assert.match(page, /:disabled="pending \|\| paginaActual >= data\.total_paginas"/)
 })
+
+test('las rutas y la navegación de gestión de operadores requieren OWNER', () => {
+  const middleware = readFileSync(
+    join(WEB_ROOT, 'app', 'middleware', 'sesion-owner-operadores.ts'),
+    'utf8',
+  )
+  const layout = readFileSync(join(WEB_ROOT, 'app', 'layouts', 'admin.vue'), 'utf8')
+  const proxy = readFileSync(
+    join(WEB_ROOT, 'server', 'utils', 'proxy-admin-operadores.ts'),
+    'utf8',
+  )
+  const bffGet = readFileSync(
+    join(WEB_ROOT, 'server', 'api', 'admin', 'operadores.get.ts'),
+    'utf8',
+  )
+  const bffOperadores = [
+    'server/api/admin/operadores.get.ts',
+    'server/api/admin/operadores.post.ts',
+    'server/api/admin/operadores/[id].get.ts',
+    'server/api/admin/operadores/[id]/desactivar.post.ts',
+    'server/api/admin/operadores/[id]/reactivar.post.ts',
+    'server/api/admin/operadores/[id]/reenviar-invitacion.post.ts',
+    'server/api/admin/operadores/[id]/regenerar-contrasena.post.ts',
+  ].map((ruta) => readFileSync(join(WEB_ROOT, ruta), 'utf8'))
+  const bffEventos = readFileSync(
+    join(WEB_ROOT, 'server', 'api', 'admin', 'operadores', 'eventos.get.ts'),
+    'utf8',
+  )
+  const dashboardAdmin = readFileSync(
+    join(WEB_ROOT, 'app', 'pages', 'admin', 'index.vue'),
+    'utf8',
+  )
+  const paginas = [
+    'app/pages/admin/operadores/index.vue',
+    'app/pages/admin/operadores/nuevo.vue',
+    'app/pages/admin/operadores/[id].vue',
+  ].map((ruta) => readFileSync(join(WEB_ROOT, ruta), 'utf8'))
+
+  assert.match(middleware, /resolverSesion\(\{ forzar: forzarVerificacion \}\)/)
+  assert.match(middleware, /usuario\.value\.rol === 'OWNER'/)
+  assert.match(middleware, /usuario\.value\.rol === 'OPERADOR' \? '\/operador' : '\/admin'/)
+  assert.match(middleware, /!autenticado\.value \|\| usuario\.value === null/)
+  for (const pagina of paginas) {
+    assert.match(pagina, /layout: 'admin'/)
+    assert.match(pagina, /middleware: 'sesion-owner-operadores'/)
+  }
+
+  const inicioEnlace = layout.indexOf('to="/admin/operadores"')
+  assert.notEqual(inicioEnlace, -1)
+  const inicioElemento = layout.lastIndexOf('<NuxtLink', inicioEnlace)
+  const finElemento = layout.indexOf('</NuxtLink>', inicioEnlace)
+  const enlaceOperadores = layout.slice(inicioElemento, finElemento)
+  assert.match(enlaceOperadores, /v-if="usuario\?\.rol === 'OWNER'"/)
+  assert.match(proxy, /proxyRequest\(\s*event,/)
+  assert.match(bffGet, /proxyAdminOperadores\(\s*event,/)
+  for (const ruta of bffOperadores) {
+    assert.match(ruta, /proxyAdminOperadores\(\s*event(?:,|\))/)
+  }
+  assert.match(bffEventos, /proxyEventos\(event\)/)
+  assert.match(dashboardAdmin, /middleware: 'sesion-admin'/)
+})

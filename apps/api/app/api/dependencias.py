@@ -128,6 +128,45 @@ def exigir_admin(
     return usuario_id
 
 
+def exigir_owner(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> int:
+    """Valida la sesion vigente y exige el rol OWNER persistido."""
+
+    response.headers.update(CABECERA_NO_CACHE)
+    token = request.cookies.get(get_settings().session_cookie_name)
+    if not token:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    try:
+        usuario = obtener_usuario_por_token(db, token=token)
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno",
+            headers=CABECERA_NO_CACHE,
+        ) from None
+
+    if usuario is None:
+        db.rollback()
+        _error_sesion_no_autenticada()
+
+    usuario_id = usuario.id
+    es_owner = usuario.rol == RolUsuario.OWNER.value
+    db.rollback()
+    if not es_owner:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado",
+            headers=CABECERA_NO_CACHE,
+        )
+    return usuario_id
+
+
 def _error_dispositivo_no_autenticado() -> NoReturn:
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -168,5 +207,6 @@ __all__ = [
     "exigir_admin",
     "exigir_dispositivo",
     "exigir_operador",
+    "exigir_owner",
     "exigir_personal",
 ]

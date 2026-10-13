@@ -26,15 +26,16 @@ from main import app
 
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
 NOMBRE_COOKIE = "smart_parking_session"
-CONTRASENA_ADMIN = "Contrasena segura SP025 123"
+CONTRASENA_OWNER = "Contrasena segura SP025 123"
+CONTRASENA_OPERADOR = "Contrasena operador SP025 123"
 
 
 def correo_de_prueba() -> str:
     return f"sp025-test-{uuid4().hex}@example.com"
 
 
-def crear_admin_autenticado(db: Session) -> tuple[Usuario, str]:
-    """Crea un ADMIN vigente y una cookie de sesión persistida para la prueba."""
+def crear_owner_autenticado(db: Session) -> tuple[Usuario, str]:
+    """Crea un OWNER vigente y una cookie de sesión persistida para la prueba."""
 
     resultado = crear_admin(
         db,
@@ -42,10 +43,11 @@ def crear_admin_autenticado(db: Session) -> tuple[Usuario, str]:
         apellido_paterno="Johnson",
         apellido_materno="Coleman",
         correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
+        contrasena=CONTRASENA_OWNER,
+        confirmacion_contrasena=CONTRASENA_OWNER,
     )
     usuario = resultado.usuario
+    usuario.rol = RolUsuario.OWNER.value
     usuario.esta_activo = True
     usuario.correo_verificado = True
     usuario.debe_cambiar_contrasena = False
@@ -77,7 +79,7 @@ def crear_operador_existente(db: Session, correo: str) -> Usuario:
         apellido_paterno="Hopper",
         apellido_materno="Murray",
         correo=correo,
-        contrasena_hash=crear_hash_contrasena(CONTRASENA_ADMIN),
+        contrasena_hash=crear_hash_contrasena(CONTRASENA_OPERADOR),
         rol=RolUsuario.OPERADOR.value,
         correo_verificado=True,
         esta_activo=True,
@@ -125,11 +127,11 @@ def datos_operador(correo: str | None = None) -> dict[str, object]:
     }
 
 
-def test_admin_crea_operador_pendiente_sin_password_ni_sesion(
+def test_owner_crea_operador_pendiente_sin_password_ni_sesion(
     db: Session,
     client: TestClient,
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     correo = correo_de_prueba()
 
     settings = Settings(
@@ -193,11 +195,11 @@ def test_admin_crea_operador_pendiente_sin_password_ni_sesion(
     )
 
 
-def test_sesion_admin_autoriza_antes_de_comprobar_correo_existente(
+def test_sesion_owner_autoriza_antes_de_comprobar_correo_existente(
     db: Session,
     client: TestClient,
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     correo_existente = correo_de_prueba()
     crear_admin(
         db,
@@ -205,8 +207,8 @@ def test_sesion_admin_autoriza_antes_de_comprobar_correo_existente(
         apellido_paterno="Lovelace",
         apellido_materno="Byron",
         correo=correo_existente,
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
+        contrasena=CONTRASENA_OWNER,
+        confirmacion_contrasena=CONTRASENA_OWNER,
     )
 
     with patch("app.api.rutas.operadores.crear_operador") as crear:
@@ -244,9 +246,10 @@ def test_sesion_admin_autoriza_antes_de_comprobar_correo_existente(
         "correo_no_verificado",
         "cambio_obligatorio",
         "rol_operador",
+        "rol_admin",
     ],
 )
-def test_solo_sesion_admin_vigente_puede_crear_operador(
+def test_solo_sesion_owner_vigente_puede_crear_operador(
     db: Session,
     client: TestClient,
     estado: str,
@@ -257,7 +260,7 @@ def test_solo_sesion_admin_vigente_puede_crear_operador(
     elif estado == "token_invalido":
         cookies = {NOMBRE_COOKIE: "token-desconocido-sp025"}
     else:
-        usuario, token = crear_admin_autenticado(db)
+        usuario, token = crear_owner_autenticado(db)
         sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == usuario.id))
         assert sesion is not None
         if estado == "sesion_expirada":
@@ -272,6 +275,8 @@ def test_solo_sesion_admin_vigente_puede_crear_operador(
             usuario.debe_cambiar_contrasena = True
         elif estado == "rol_operador":
             usuario.rol = RolUsuario.OPERADOR.value
+        elif estado == "rol_admin":
+            usuario.rol = RolUsuario.ADMIN.value
         db.commit()
         db.rollback()
         cookies = {NOMBRE_COOKIE: token}
@@ -285,8 +290,10 @@ def test_solo_sesion_admin_vigente_puede_crear_operador(
         cookies=cookies,
     )
 
-    assert respuesta.status_code == 401
-    assert respuesta.json() == {"detail": "No autenticado"}
+    estado_esperado = 403 if estado in {"rol_operador", "rol_admin"} else 401
+    detalle_esperado = "Acceso denegado" if estado_esperado == 403 else "No autenticado"
+    assert respuesta.status_code == estado_esperado
+    assert respuesta.json() == {"detail": detalle_esperado}
     assert respuesta.headers["cache-control"] == "no-store"
     assert db.scalar(select(Usuario.id).where(Usuario.correo == correo)) is None
 
@@ -335,7 +342,7 @@ def test_solicitud_invalida_es_sanitizada_y_no_persiste(
     client: TestClient,
     cambio: dict[str, str],
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     payload: dict[str, object] = datos_operador()
     payload.update(cambio)
 
@@ -366,7 +373,7 @@ def test_cada_campo_requerido_debe_venir_en_la_solicitud(
     client: TestClient,
     campo_omitido: str,
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     payload = datos_operador()
     payload.pop(campo_omitido)
 
@@ -388,7 +395,7 @@ def test_solicitud_rechaza_tipos_de_campo_no_textuales(
     db: Session,
     client: TestClient,
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     payload: dict[str, object] = datos_operador()
     payload["nombre"] = 123
 
@@ -407,11 +414,11 @@ def test_solicitud_rechaza_tipos_de_campo_no_textuales(
     assert db.scalar(select(func.count()).select_from(Usuario)) == 1
 
 
-def test_fallo_de_resolucion_de_sesion_es_401_generico_y_no_cacheable(
+def test_fallo_de_resolucion_de_sesion_es_error_interno_no_cacheable(
     client: TestClient,
 ) -> None:
     with patch(
-        "app.api.rutas.operadores.obtener_usuario_admin_por_token",
+        "app.api.dependencias.obtener_usuario_por_token",
         side_effect=SQLAlchemyError("detalle interno no publico"),
     ):
         respuesta = solicitar_con_cookies(
@@ -422,8 +429,8 @@ def test_fallo_de_resolucion_de_sesion_es_401_generico_y_no_cacheable(
             cookies={NOMBRE_COOKIE: "token-de-prueba-sp025"},
         )
 
-    assert respuesta.status_code == 401
-    assert respuesta.json() == {"detail": "No autenticado"}
+    assert respuesta.status_code == 500
+    assert respuesta.json() == {"detail": "Error interno"}
     assert respuesta.headers["cache-control"] == "no-store"
     assert "detalle interno no publico" not in respuesta.text
 
@@ -432,7 +439,7 @@ def test_error_de_otra_restriccion_no_se_convierte_en_correo_duplicado(
     db: Session,
     client: TestClient,
 ) -> None:
-    _admin, token = crear_admin_autenticado(db)
+    _owner, token = crear_owner_autenticado(db)
     error = SQLAlchemyError("fallo de persistencia controlado")
     with patch("app.api.rutas.operadores.crear_operador", side_effect=error):
         respuesta = solicitar_con_cookies(
@@ -465,7 +472,7 @@ def test_operador_existente_tampoco_puede_usar_su_sesion_para_crear(
         cookies={NOMBRE_COOKIE: token},
     )
 
-    assert respuesta.status_code == 401
-    assert respuesta.json() == {"detail": "No autenticado"}
+    assert respuesta.status_code == 403
+    assert respuesta.json() == {"detail": "Acceso denegado"}
     assert respuesta.headers["cache-control"] == "no-store"
     assert db.scalar(select(func.count()).select_from(Usuario)) == 1

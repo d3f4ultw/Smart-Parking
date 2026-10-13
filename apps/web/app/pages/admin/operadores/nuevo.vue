@@ -3,7 +3,7 @@ import { obtenerPaginaSolicitadaOperadores } from '~/utils/gestion-operadores'
 
 definePageMeta({
   layout: 'admin',
-  middleware: 'sesion-admin',
+  middleware: 'sesion-owner-operadores',
 })
 
 const route = useRoute()

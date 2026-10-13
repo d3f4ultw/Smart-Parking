@@ -1,11 +1,12 @@
-"""Rutas ADMIN para consultar y administrar cuentas OPERADOR."""
+"""Rutas OWNER para consultar y administrar cuentas OPERADOR."""
 
 from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.api.dependencias import exigir_owner
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.correo.errores import ErrorCorreo
@@ -22,7 +23,6 @@ from app.esquemas.operadores import (
     SolicitudCrearOperador,
 )
 from app.models import Usuario
-from app.servicios.autenticacion import obtener_usuario_admin_por_token
 from app.servicios.eventos_operadores import (
     obtener_marca_eventos,
 )
@@ -49,42 +49,9 @@ from app.servicios.usuarios import (
 )
 
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
-DETALLE_SESION_NO_AUTENTICADA = "No autenticado"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
 
 router = APIRouter(prefix=RUTA_CREAR_OPERADOR, tags=["admin"])
-
-
-def _error_sesion_no_autenticada() -> NoReturn:
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail=DETALLE_SESION_NO_AUTENTICADA,
-        headers=CABECERA_NO_CACHE,
-    )
-
-
-def _exigir_admin(
-    request: Request,
-    db: Annotated[Session, Depends(get_db)],
-) -> int:
-    """Autoriza la cookie persistida y devuelve el id del ADMIN autenticado."""
-
-    token = request.cookies.get(get_settings().session_cookie_name)
-    if not token:
-        db.rollback()
-        _error_sesion_no_autenticada()
-
-    try:
-        usuario = obtener_usuario_admin_por_token(db, token=token)
-    except SQLAlchemyError:
-        db.rollback()
-        _error_sesion_no_autenticada()
-
-    admin_usuario_id = usuario.id if usuario is not None else None
-    db.rollback()
-    if admin_usuario_id is None:
-        _error_sesion_no_autenticada()
-    return admin_usuario_id
 
 
 def _error_operador_no_encontrado() -> NoReturn:
@@ -122,12 +89,12 @@ def _error_interno() -> NoReturn:
 @router.get("", response_model=RespuestaListaOperadores)
 def listar_operadores_endpoint(
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
     pagina: Annotated[int, Query(ge=1)] = 1,
     buscar: Annotated[str | None, Query(max_length=320)] = None,
 ) -> RespuestaListaOperadores:
-    """Lista una pagina de campos seguros de cuentas OPERADOR para ADMIN."""
+    """Lista una pagina de campos seguros de cuentas OPERADOR para OWNER."""
 
     response.headers.update(CABECERA_NO_CACHE)
     try:
@@ -152,7 +119,7 @@ def listar_operadores_endpoint(
 def obtener_operador_endpoint(
     operador_id: int,
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaOperador:
     """Muestra la vista segura de un OPERADOR existente."""
@@ -182,7 +149,7 @@ def obtener_operador_endpoint(
 def desactivar_operador_endpoint(
     operador_id: int,
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaAccionOperador:
     """Desactiva la cuenta y revoca sus sesiones existentes."""
@@ -206,7 +173,7 @@ def desactivar_operador_endpoint(
 def reactivar_operador_endpoint(
     operador_id: int,
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaAccionOperador:
     """Reactiva la cuenta sin restaurar sesiones anteriores."""
@@ -230,7 +197,7 @@ def reactivar_operador_endpoint(
 def regenerar_contrasena_operador_endpoint(
     operador_id: int,
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaAccionOperador:
     """Regenera, persiste y entrega una contraseña sin devolverla por API."""
@@ -279,7 +246,7 @@ def regenerar_contrasena_operador_endpoint(
 def reenviar_invitacion_operador_endpoint(
     operador_id: int,
     response: Response,
-    _admin: Annotated[int, Depends(_exigir_admin)],
+    _owner: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaAccionOperador:
     """Entrega un enlace nuevo solo para una cuenta OPERADOR pendiente."""
@@ -339,7 +306,7 @@ def reenviar_invitacion_operador_endpoint(
 def crear_operador_endpoint(
     solicitud: SolicitudCrearOperador,
     response: Response,
-    admin_usuario_id: Annotated[int, Depends(_exigir_admin)],
+    owner_usuario_id: Annotated[int, Depends(exigir_owner)],
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaCrearOperador:
     """Crea un OPERADOR autenticado y devuelve un estado sin credenciales."""
@@ -363,7 +330,7 @@ def crear_operador_endpoint(
             apellido_paterno=solicitud.apellido_paterno,
             apellido_materno=solicitud.apellido_materno,
             correo=solicitud.correo,
-            creado_por_usuario_id=admin_usuario_id,
+            creado_por_usuario_id=owner_usuario_id,
             entregar_invitacion=entregar_invitacion,
             duracion_token_horas=settings.activation_token_ttl_hours,
         )

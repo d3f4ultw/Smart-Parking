@@ -211,14 +211,10 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
         revalidar_sesion=True,
         renovar_conexion=True,
     )
-    assert [fila.id for fila in lote_admin.eventos] == [evento.id, evento_cajon.id]
+    assert [fila.id for fila in lote_admin.eventos] == [evento_cajon.id]
     assert tipos_autorizados_para_rol("OPERADOR") == {"cajon.actualizado"}
     assert tipos_autorizados_para_rol("ROL_FALSO") == frozenset()
-    assert tipos_autorizados_para_rol("ADMIN") == {
-        "operador.creado",
-        "operador.actualizado",
-        "cajon.actualizado",
-    }
+    assert tipos_autorizados_para_rol("ADMIN") == {"cajon.actualizado"}
     owner_id, token_owner = _crear_owner(db)
     lease_owner = admitir_conexion_sse(
         db,
@@ -393,11 +389,21 @@ def test_event_ids_wait_for_the_prior_transaction_commit(db: Session) -> None:
     ] == [1, 2]
 
 
-def test_dos_admins_leen_independientemente_replay_y_pagina_de_cien(
+def test_dos_sesiones_owner_leen_replay_independientemente_y_paginan_cien(
     db: Session,
 ) -> None:
-    admin_a, token_a = _crear_admin(db)
-    admin_b, token_b = _crear_admin(db)
+    owner_a, token_a = _crear_owner(db)
+    owner_b = owner_a
+    token_b = f"token-owner-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=owner_b,
+            token_hash=hash_token_sesion(token_b),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    db.rollback()
     operador = _crear_operador(db)
     with db.begin():
         for _ in range(MAXIMO_EVENTOS_POR_LECTURA + 1):
@@ -405,27 +411,29 @@ def test_dos_admins_leen_independientemente_replay_y_pagina_de_cien(
 
     lease_a = admitir_conexion_sse_admin(
         db,
-        admin_usuario_id=admin_a,
+        admin_usuario_id=owner_a,
         token_sesion=token_a,
     )
     lease_b = admitir_conexion_sse_admin(
         db,
-        admin_usuario_id=admin_b,
+        admin_usuario_id=owner_b,
         token_sesion=token_b,
     )
 
-    lote_a = consultar_lote_eventos_sse(
+    lote_a = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=admin_a,
+        usuario_id=owner_a,
+        rol_usuario="OWNER",
         token_sesion=token_a,
         lease_id=lease_a,
         cursor=0,
         revalidar_sesion=True,
         renovar_conexion=False,
     )
-    lote_b = consultar_lote_eventos_sse(
+    lote_b = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=admin_b,
+        usuario_id=owner_b,
+        rol_usuario="OWNER",
         token_sesion=token_b,
         lease_id=lease_b,
         cursor=0,
@@ -439,9 +447,10 @@ def test_dos_admins_leen_independientemente_replay_y_pagina_de_cien(
         evento.id for evento in lote_a.eventos
     ]
 
-    siguiente = consultar_lote_eventos_sse(
+    siguiente = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=admin_a,
+        usuario_id=owner_a,
+        rol_usuario="OWNER",
         token_sesion=token_a,
         lease_id=lease_a,
         cursor=lote_a.eventos[-1].id,
@@ -455,7 +464,7 @@ def test_dos_admins_leen_independientemente_replay_y_pagina_de_cien(
 
 
 def test_resync_cuando_cursor_quedo_fuera_del_historial(db: Session) -> None:
-    admin_id, token = _crear_admin(db)
+    owner_id, token_owner = _crear_owner(db)
     operador = _crear_operador(db)
     with db.begin():
         estado = db.get(EstadoEventosOperadores, 1)
@@ -471,13 +480,14 @@ def test_resync_cuando_cursor_quedo_fuera_del_historial(db: Session) -> None:
 
     lease_id = admitir_conexion_sse_admin(
         db,
-        admin_usuario_id=admin_id,
-        token_sesion=token,
+        admin_usuario_id=owner_id,
+        token_sesion=token_owner,
     )
-    lote = consultar_lote_eventos_sse(
+    lote = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=admin_id,
-        token_sesion=token,
+        usuario_id=owner_id,
+        rol_usuario="OWNER",
+        token_sesion=token_owner,
         lease_id=lease_id,
         cursor=1,
         revalidar_sesion=True,

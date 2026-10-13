@@ -25,7 +25,7 @@ import {
 
 definePageMeta({
   layout: 'admin',
-  middleware: 'sesion-admin',
+  middleware: 'sesion-owner-operadores',
 })
 
 const CLAVE_LISTA_OPERADORES = 'admin-operadores-lista'

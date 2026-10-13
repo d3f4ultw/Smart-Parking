@@ -37,7 +37,7 @@ from main import app
 
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
 NOMBRE_COOKIE = "smart_parking_session"
-CONTRASENA_ADMIN = "Contrasena segura SP026 123"
+CONTRASENA_OWNER = "Contrasena segura SP026 123"
 
 
 class FakeTransport:
@@ -83,17 +83,18 @@ def settings_de_prueba(**overrides: Any) -> Settings:
     return Settings(**valores)
 
 
-def crear_admin_autenticado(db: Session) -> str:
+def crear_owner_autenticado(db: Session) -> str:
     resultado = crear_admin(
         db,
         nombre="Katherine",
         apellido_paterno="Johnson",
         apellido_materno="Coleman",
         correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
+        contrasena=CONTRASENA_OWNER,
+        confirmacion_contrasena=CONTRASENA_OWNER,
     )
     usuario = resultado.usuario
+    usuario.rol = RolUsuario.OWNER.value
     usuario.esta_activo = True
     usuario.correo_verificado = True
     usuario.debe_cambiar_contrasena = False
@@ -182,13 +183,13 @@ def correo_falso(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeTransport, Settin
     return transporte, settings
 
 
-def test_admin_crea_operador_pendiente_y_entrega_un_enlace_de_activacion(
+def test_owner_crea_operador_pendiente_y_entrega_un_enlace_de_activacion(
     db: Session,
     client: TestClient,
     correo_falso: tuple[FakeTransport, Settings],
 ) -> None:
     transporte, _settings = correo_falso
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     correo = correo_de_prueba()
 
     respuesta = solicitar_con_cookies(
@@ -250,7 +251,7 @@ def test_solicitud_invalida_no_entrega_ni_crea_operador(
     correo_falso: tuple[FakeTransport, Settings],
 ) -> None:
     transporte, _settings = correo_falso
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     datos = datos_operador()
     datos["correo"] = "correo-invalido"
 
@@ -277,7 +278,7 @@ def test_correo_duplicado_no_entrega_ni_crea_un_operador_adicional(
     correo_falso: tuple[FakeTransport, Settings],
 ) -> None:
     transporte, _settings = correo_falso
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     correo = correo_de_prueba()
     crear_operador_existente(db, correo)
 
@@ -347,7 +348,7 @@ def test_sesion_operador_no_entrega_ni_crea_operador(
         cookies={NOMBRE_COOKIE: token},
     )
 
-    assert respuesta.status_code == 401
+    assert respuesta.status_code == 403
     assert transporte.mensajes == []
     assert db.scalar(select(Usuario.id).where(Usuario.correo == correo)) is None
     assert (
@@ -367,7 +368,7 @@ def test_fallo_de_entrega_devuelve_503_generico_y_revierte_alta(
 ) -> None:
     transporte, _settings = correo_falso
     transporte.error = ErrorEnvioCorreo()
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     correo = correo_de_prueba()
 
     respuesta = solicitar_con_cookies(
@@ -408,7 +409,7 @@ def test_configuracion_de_remitente_invalida_devuelve_503_y_revierte_alta(
         "app.api.rutas.operadores.crear_transporte_correo",
         lambda settings: SMTPTransport(settings),
     )
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     correo = correo_de_prueba()
 
     respuesta = solicitar_con_cookies(

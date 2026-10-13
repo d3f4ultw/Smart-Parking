@@ -1,4 +1,4 @@
-"""Pruebas SP-028 para la administracion segura de cuentas OPERADOR."""
+"""Pruebas SP-028 para la administracion OWNER de cuentas OPERADOR."""
 
 from __future__ import annotations
 
@@ -120,6 +120,24 @@ def crear_admin_autenticado(db: Session) -> str:
     return token
 
 
+def crear_owner_autenticado(db: Session) -> str:
+    """Crea una sesion sintetica cuyo rol actual es OWNER."""
+
+    token = crear_admin_autenticado(db)
+    sesion = db.scalar(
+        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token))
+    )
+    if sesion is None:
+        pytest.fail("No se encontro la sesion sintetica OWNER.")
+    usuario = db.get(Usuario, sesion.usuario_id)
+    if usuario is None:
+        pytest.fail("No se encontro la cuenta sintetica OWNER.")
+    usuario.rol = RolUsuario.OWNER.value
+    db.commit()
+    db.rollback()
+    return token
+
+
 def crear_operador_prueba(
     db: Session,
     *,
@@ -183,6 +201,7 @@ def solicitar_con_cookie(
     ruta: str,
     *,
     token: str | None = None,
+    cuerpo: dict[str, str] | None = None,
 ) -> Any:
     """Fija o quita la cookie de sesión en el cliente de pruebas."""
 
@@ -194,7 +213,9 @@ def solicitar_con_cookie(
             domain="testserver.local",
             path="/",
         )
-    return client.request(metodo, ruta)
+    if cuerpo is None:
+        return client.request(metodo, ruta)
+    return client.request(metodo, ruta, json=cuerpo)
 
 
 @pytest.fixture
@@ -238,11 +259,11 @@ def transporte_falso(
     return transporte, settings
 
 
-def test_admin_lista_y_consulta_solo_operadores_con_campos_permitidos(
+def test_owner_lista_y_consulta_solo_operadores_con_campos_permitidos(
     db: Session,
     client: TestClient,
 ) -> None:
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     operador_a = crear_operador_prueba(db, correo=correo_de_prueba())
     operador_b = crear_operador_prueba(db, correo=correo_de_prueba())
     otro_admin = crear_admin(
@@ -319,11 +340,119 @@ def test_admin_lista_y_consulta_solo_operadores_con_campos_permitidos(
     assert detalle_admin.status_code == detalle_ausente.status_code == 404
 
 
-def test_admin_lista_operadores_pagina_diez_elementos_y_limpia_pagina_fuera_de_rango(
+def test_owner_crea_operador_con_la_invitacion_existente(
+    db: Session,
+    client: TestClient,
+    transporte_falso: tuple[TransporteFalso, Settings],
+) -> None:
+    transporte, _settings = transporte_falso
+    token_owner = crear_owner_autenticado(db)
+    sesion_owner = db.scalar(
+        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_owner))
+    )
+    assert sesion_owner is not None
+    correo = correo_de_prueba()
+
+    respuesta = solicitar_con_cookie(
+        client,
+        "POST",
+        RUTA_OPERADORES,
+        token=token_owner,
+        cuerpo={
+            "nombre": "Grace",
+            "apellido_paterno": "Hopper",
+            "apellido_materno": "Murray",
+            "correo": correo,
+        },
+    )
+
+    assert respuesta.status_code == 201
+    assert respuesta.headers["cache-control"] == "no-store"
+    assert respuesta.json() == {"estado": "operador_creado"}
+    assert correo not in respuesta.text
+    assert len(transporte.mensajes) == 1
+    assert transporte.mensajes[0]["To"] == correo
+    db.rollback()
+    operador = db.scalar(select(Usuario).where(Usuario.correo == correo))
+    assert operador is not None
+    assert operador.rol == RolUsuario.OPERADOR.value
+    assert operador.creado_por_usuario_id == sesion_owner.usuario_id
+
+
+@pytest.mark.parametrize(
+    ("rol_nuevo", "estado_esperado"),
+    [
+        (RolUsuario.ADMIN.value, 403),
+        (None, 401),
+    ],
+)
+def test_la_autorizacion_usa_el_rol_persistido_actual(
+    db: Session,
+    client: TestClient,
+    rol_nuevo: str | None,
+    estado_esperado: int,
+) -> None:
+    token_owner = crear_owner_autenticado(db)
+    operador = crear_operador_prueba(db)
+    primera = solicitar_con_cookie(
+        client,
+        "GET",
+        RUTA_OPERADORES,
+        token=token_owner,
+    )
+    assert primera.status_code == 200
+    sesion_owner = db.scalar(
+        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_owner))
+    )
+    assert sesion_owner is not None
+    usuario = db.get(Usuario, sesion_owner.usuario_id)
+    assert usuario is not None
+    usuario.rol = rol_nuevo
+    db.commit()
+    db.rollback()
+
+    respuesta = solicitar_con_cookie(
+        client,
+        "GET",
+        f"{RUTA_OPERADORES}/{operador.id}",
+        token=token_owner,
+    )
+
+    assert respuesta.status_code == estado_esperado
+    assert operador.correo not in respuesta.text
+    assert respuesta.headers["cache-control"] == "no-store"
+
+
+def test_cuenta_owner_deshabilitada_no_puede_gestionar_operadores(
     db: Session,
     client: TestClient,
 ) -> None:
-    token = crear_admin_autenticado(db)
+    token_owner = crear_owner_autenticado(db)
+    sesion_owner = db.scalar(
+        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_owner))
+    )
+    assert sesion_owner is not None
+    usuario = db.get(Usuario, sesion_owner.usuario_id)
+    assert usuario is not None
+    usuario.esta_activo = False
+    db.commit()
+
+    respuesta = solicitar_con_cookie(
+        client,
+        "GET",
+        RUTA_OPERADORES,
+        token=token_owner,
+    )
+
+    assert respuesta.status_code == 401
+    assert respuesta.headers["cache-control"] == "no-store"
+
+
+def test_owner_lista_operadores_pagina_diez_elementos_y_limpia_pagina_fuera_de_rango(
+    db: Session,
+    client: TestClient,
+) -> None:
+    token = crear_owner_autenticado(db)
     hash_operador = crear_hash_contrasena(CONTRASENA_OPERADOR)
     operadores = [
         Usuario(
@@ -401,11 +530,11 @@ def test_admin_lista_operadores_pagina_diez_elementos_y_limpia_pagina_fuera_de_r
     assert "contrasena_hash" not in primera.text
 
 
-def test_admin_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
+def test_owner_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
     db: Session,
     client: TestClient,
 ) -> None:
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
     hash_operador = crear_hash_contrasena(CONTRASENA_OPERADOR)
     operadores_base = [
         Usuario(
@@ -536,11 +665,11 @@ def test_admin_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
     assert consulta_excesiva.status_code == 422
 
 
-def test_admin_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
+def test_owner_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
     db: Session,
     client: TestClient,
 ) -> None:
-    token = crear_admin_autenticado(db)
+    token = crear_owner_autenticado(db)
 
     vacia = solicitar_con_cookie(client, "GET", RUTA_OPERADORES, token=token)
     invalida = solicitar_con_cookie(
@@ -565,62 +694,119 @@ def test_admin_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
 
 
 @pytest.mark.parametrize(
-    ("metodo", "ruta"),
+    ("metodo", "ruta", "cuerpo"),
     [
-        ("GET", RUTA_OPERADORES),
-        ("GET", f"{RUTA_OPERADORES}/1"),
-        ("POST", f"{RUTA_OPERADORES}/1/desactivar"),
-        ("POST", f"{RUTA_OPERADORES}/1/reactivar"),
-        ("POST", f"{RUTA_OPERADORES}/1/regenerar-contrasena"),
-        ("POST", f"{RUTA_OPERADORES}/1/reenviar-invitacion"),
+        ("GET", RUTA_OPERADORES, None),
+        ("GET", f"{RUTA_OPERADORES}/1", None),
+        (
+            "POST",
+            RUTA_OPERADORES,
+            {
+                "nombre": "Ada",
+                "apellido_paterno": "Lovelace",
+                "apellido_materno": "Byron",
+                "correo": "admin-denegado@example.com",
+            },
+        ),
+        ("POST", f"{RUTA_OPERADORES}/1/desactivar", None),
+        ("POST", f"{RUTA_OPERADORES}/1/reactivar", None),
+        ("POST", f"{RUTA_OPERADORES}/1/regenerar-contrasena", None),
+        ("POST", f"{RUTA_OPERADORES}/1/reenviar-invitacion", None),
     ],
 )
-def test_todas_las_rutas_de_gestion_exigen_sesion_admin(
+def test_admin_no_accede_y_las_rutas_exigen_sesion_owner(
     db: Session,
     client: TestClient,
+    transporte_falso: tuple[TransporteFalso, Settings],
     metodo: str,
     ruta: str,
+    cuerpo: dict[str, str] | None,
 ) -> None:
+    transporte, _settings = transporte_falso
     operador = crear_operador_prueba(db)
     token_operador = agregar_sesion(db, operador)
     db.rollback()
-    token_admin_revocado = crear_admin_autenticado(db)
-    sesion_admin = db.scalar(
+    token_admin = crear_admin_autenticado(db)
+    token_owner_revocado = crear_owner_autenticado(db)
+    sesion_owner_revocada = db.scalar(
         select(Sesion).where(
-            Sesion.token_hash == hash_token_sesion(token_admin_revocado)
+            Sesion.token_hash == hash_token_sesion(token_owner_revocado)
         )
     )
-    if sesion_admin is None:
-        pytest.fail("No se encontro la sesion sintetica ADMIN para revocar.")
-    sesion_admin.revocado_en = datetime.now(UTC)
+    if sesion_owner_revocada is None:
+        pytest.fail("No se encontro la sesion sintetica OWNER para revocar.")
+    usuario_owner = db.get(Usuario, sesion_owner_revocada.usuario_id)
+    if usuario_owner is None:
+        pytest.fail("No se encontro la cuenta sintetica OWNER.")
+    token_owner_expirado = agregar_sesion(
+        db,
+        usuario_owner,
+        expira_en=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    sesion_owner_revocada.revocado_en = datetime.now(UTC)
     db.commit()
     db.rollback()
 
-    respuesta_anonima = solicitar_con_cookie(client, metodo, ruta)
+    respuesta_anonima = solicitar_con_cookie(
+        client,
+        metodo,
+        ruta,
+        cuerpo=cuerpo,
+    )
     respuesta_operador = solicitar_con_cookie(
         client,
         metodo,
         ruta,
         token=token_operador,
+        cuerpo=cuerpo,
+    )
+    respuesta_admin = solicitar_con_cookie(
+        client,
+        metodo,
+        ruta,
+        token=token_admin,
+        cuerpo=cuerpo,
     )
     respuesta_cookie_invalida = solicitar_con_cookie(
         client,
         metodo,
         ruta,
         token="token-invalido-sp028",
+        cuerpo=cuerpo,
+    )
+    respuesta_sesion_expirada = solicitar_con_cookie(
+        client,
+        metodo,
+        ruta,
+        token=token_owner_expirado,
+        cuerpo=cuerpo,
     )
     respuesta_sesion_revocada = solicitar_con_cookie(
         client,
         metodo,
         ruta,
-        token=token_admin_revocado,
+        token=token_owner_revocado,
+        cuerpo=cuerpo,
     )
 
     assert respuesta_anonima.status_code == 401
-    assert respuesta_operador.status_code == 401
+    assert respuesta_operador.status_code == 403
+    assert respuesta_admin.status_code == 403
+    assert respuesta_admin.json() == {"detail": "Acceso denegado"}
+    assert operador.correo not in respuesta_admin.text
     assert respuesta_cookie_invalida.status_code == 401
     assert respuesta_sesion_revocada.status_code == 401
-    assert respuesta_operador.headers["cache-control"] == "no-store"
+    assert respuesta_admin.headers["cache-control"] == "no-store"
+    assert respuesta_sesion_expirada.status_code == 401
+    assert respuesta_sesion_revocada.headers["cache-control"] == "no-store"
+    assert transporte.mensajes == []
+    db.rollback()
+    assert (
+        db.scalar(
+            select(Usuario.id).where(Usuario.correo == "admin-denegado@example.com")
+        )
+        is None
+    )
 
 
 def test_mutaciones_devuelven_404_para_id_ausente_o_rol_distinto(
@@ -629,7 +815,7 @@ def test_mutaciones_devuelven_404_para_id_ausente_o_rol_distinto(
     transporte_falso: tuple[TransporteFalso, Settings],
 ) -> None:
     transporte, _settings = transporte_falso
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     admin_ajeno = crear_admin(
         db,
         nombre="Ada",
@@ -664,7 +850,7 @@ def test_desactivar_revoca_todas_las_sesiones_y_reactivar_no_las_recupera(
     db: Session,
     client: TestClient,
 ) -> None:
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     operador = crear_operador_prueba(db)
     hash_anterior = operador.contrasena_hash
     token_vigente = agregar_sesion(db, operador)
@@ -788,7 +974,7 @@ def test_regenerar_contrasena_entrega_credencial_nueva_y_revoca_sesiones(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     transporte, _settings = transporte_falso
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     operador = crear_operador_prueba(db)
     hash_anterior = operador.contrasena_hash
     if hash_anterior is None:
@@ -872,7 +1058,7 @@ def test_regenerar_contrasena_conserva_el_estado_inactivo(
     transporte_falso: tuple[TransporteFalso, Settings],
 ) -> None:
     transporte, _settings = transporte_falso
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     operador = crear_operador_prueba(db, esta_activo=False)
     hash_anterior = operador.contrasena_hash
 
@@ -900,7 +1086,7 @@ def test_fallo_de_entrega_revierte_hash_y_revocacion_y_responde_generico(
 ) -> None:
     transporte, _settings = transporte_falso
     transporte.error = ErrorEnvioCorreo()
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     operador = crear_operador_prueba(db)
     hash_anterior = operador.contrasena_hash
     token_vigente = agregar_sesion(db, operador)
@@ -953,7 +1139,7 @@ def test_error_al_construir_correo_revierte_cambio_y_responde_503(
         "app.api.rutas.operadores.get_settings",
         lambda: configuracion_invalida,
     )
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
     operador = crear_operador_prueba(db)
     hash_anterior = operador.contrasena_hash
     token_vigente = agregar_sesion(db, operador)
@@ -1033,7 +1219,7 @@ def test_fallo_de_commit_despues_de_aceptacion_smtp_revierte_db_sin_reintento(
 
     # La API no filtra el detalle SQLAlchemy ni reintenta una entrega aceptada.
     db.rollback()
-    token_admin = crear_admin_autenticado(db)
+    token_admin = crear_owner_autenticado(db)
 
     def fallar_servicio(*_args: Any, **_kwargs: Any) -> None:
         raise SQLAlchemyError("detalle interno con credencial")

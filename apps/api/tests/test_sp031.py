@@ -53,7 +53,7 @@ from main import app
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
 RUTA_ACTIVACION = "/api/autenticacion/activacion-operador"
 NOMBRE_COOKIE_SESION = "smart_parking_session"
-CONTRASENA_ADMIN = "Contrasena segura SP031 123"
+CONTRASENA_OWNER = "Contrasena segura SP031 123"
 CONTRASENA_OPERADOR = "Operador inicial SP031 123"
 CONTRASENA_NUEVA = "Nueva clave SP031 456"
 
@@ -126,27 +126,37 @@ def client(database_url: URL) -> Generator[TestClient]:
         engine.dispose()
 
 
-def crear_admin_autenticado(db: Session) -> str:
-    resultado = crear_admin(
-        db,
-        nombre="Katherine",
-        apellido_paterno="Johnson",
-        apellido_materno="Coleman",
-        correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
+def crear_owner_autenticado(db: Session) -> str:
+    usuario_id = db.scalar(
+        select(Usuario.id).where(
+            Usuario.rol == RolUsuario.OWNER.value,
+            Usuario.esta_activo.is_(True),
+        )
     )
-    usuario = resultado.usuario
-    usuario.correo_verificado = True
-    usuario.debe_cambiar_contrasena = False
-    db.commit()
     db.rollback()
+    if usuario_id is None:
+        resultado = crear_admin(
+            db,
+            nombre="Katherine",
+            apellido_paterno="Johnson",
+            apellido_materno="Coleman",
+            correo=correo_de_prueba(),
+            contrasena=CONTRASENA_OWNER,
+            confirmacion_contrasena=CONTRASENA_OWNER,
+        )
+        usuario = resultado.usuario
+        usuario.rol = RolUsuario.OWNER.value
+        usuario.correo_verificado = True
+        usuario.debe_cambiar_contrasena = False
+        db.commit()
+        usuario_id = usuario.id
+        db.rollback()
 
-    token = f"admin-session-sp031-{uuid4().hex}"
+    token = f"owner-session-sp031-{uuid4().hex}"
     ahora = datetime.now(UTC)
     db.add(
         Sesion(
-            usuario_id=usuario.id,
+            usuario_id=usuario_id,
             token_hash=hash_token_sesion(token),
             expira_en=ahora + timedelta(minutes=30),
             creado_en=ahora,
@@ -171,7 +181,7 @@ def crear_invitacion(
         "app.api.rutas.operadores.crear_transporte_correo",
         lambda _settings: transporte,
     )
-    token_admin = crear_admin_autenticado(db)
+    token_owner = crear_owner_autenticado(db)
     correo_operador = correo or correo_de_prueba()
 
     respuesta = solicitar_con_cookies(
@@ -184,7 +194,7 @@ def crear_invitacion(
             "apellido_materno": "Murray",
             "correo": correo_operador,
         },
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     assert respuesta.status_code == 201
     assert len(transporte.mensajes) == 1
@@ -204,7 +214,7 @@ def crear_invitacion(
     )
     operador = db.scalar(select(Usuario).where(Usuario.correo == correo_operador))
     assert operador is not None
-    return operador, token_invitacion, transporte, settings, token_admin
+    return operador, token_invitacion, transporte, settings, token_owner
 
 
 def crear_invitacion_admin(db: Session) -> tuple[Usuario, str]:
@@ -319,7 +329,7 @@ def activar_operador_para_prueba(
 ) -> Usuario:
     """Completa la invitacion sintetica y devuelve la cuenta persistida."""
 
-    operador, token, _transporte, _settings, _admin = crear_invitacion(
+    operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -354,7 +364,7 @@ def test_creacion_canje_completado_y_login_normal_sin_sesion_en_activacion(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token, _transporte, _settings, _admin = crear_invitacion(
+    operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -536,7 +546,7 @@ def test_desafio_viejo_no_funciona_y_password_policy_es_servidor_autoritativo(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _operador, token, _transporte, _settings, _admin = crear_invitacion(
+    _operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -584,7 +594,7 @@ def test_desafio_vencido_no_activa_y_el_enlace_sigue_canjeable(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token, _transporte, _settings, _admin = crear_invitacion(
+    operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -647,7 +657,7 @@ def test_enlace_vencido_no_crea_desafio_ni_cambia_la_cuenta(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token, _transporte, _settings, _admin = crear_invitacion(
+    operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -686,7 +696,7 @@ def test_reenvio_fallido_preserva_invitacion_y_desafio_y_respeta_cooldown(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_anterior, transporte, settings, token_admin = crear_invitacion(
+    operador, token_anterior, transporte, settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -707,7 +717,7 @@ def test_reenvio_fallido_preserva_invitacion_y_desafio_y_respeta_cooldown(
     transporte.error = ErrorEnvioCorreo()
     ruta_reenvio = f"{RUTA_CREAR_OPERADOR}/{operador.id}/reenviar-invitacion"
     fallido = solicitar_con_cookies(
-        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_admin}
+        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_owner}
     )
     assert fallido.status_code == 503
     assert fallido.headers["cache-control"] == "no-store"
@@ -726,7 +736,7 @@ def test_reenvio_fallido_preserva_invitacion_y_desafio_y_respeta_cooldown(
     assert activacion.ultimo_reenvio_en is not None
 
     cooldown = solicitar_con_cookies(
-        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_admin}
+        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_owner}
     )
     assert cooldown.status_code == 429
     assert transporte.mensajes == []
@@ -736,7 +746,7 @@ def test_reenvio_fallido_preserva_invitacion_y_desafio_y_respeta_cooldown(
     db.rollback()
     transporte.error = None
     reenviado = solicitar_con_cookies(
-        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_admin}
+        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_owner}
     )
     assert reenviado.status_code == 200
     assert reenviado.json() == {"estado": "invitacion_enviada"}
@@ -778,7 +788,7 @@ def test_commit_final_fallido_conserva_invitacion_anterior_y_oculta_candidata(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_anterior, transporte, _settings, token_admin = crear_invitacion(
+    operador, token_anterior, transporte, _settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -812,7 +822,7 @@ def test_commit_final_fallido_conserva_invitacion_anterior_y_oculta_candidata(
             client,
             "POST",
             f"{RUTA_CREAR_OPERADOR}/{operador.id}/reenviar-invitacion",
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
     finally:
         event.remove(Session, "before_commit", fallar_commit_final)
@@ -856,7 +866,7 @@ def test_commit_final_fallido_conserva_invitacion_anterior_y_oculta_candidata(
         client,
         "POST",
         f"{RUTA_CREAR_OPERADOR}/{operador.id}/reenviar-invitacion",
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     assert cooldown.status_code == 429
     assert len(transporte.mensajes) == 1
@@ -867,7 +877,7 @@ def test_desactivar_y_reactivar_no_reviven_el_enlace_anterior(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_anterior, transporte, _settings, token_admin = crear_invitacion(
+    operador, token_anterior, transporte, _settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -877,18 +887,18 @@ def test_desactivar_y_reactivar_no_reviven_el_enlace_anterior(
         intercambiar_enlace(client, token_anterior),
         NOMBRE_COOKIE_DESAFIO,
     )
-    ruta_admin = f"{RUTA_CREAR_OPERADOR}/{operador.id}"
+    ruta_operador = f"{RUTA_CREAR_OPERADOR}/{operador.id}"
     desactivar = solicitar_con_cookies(
         client,
         "POST",
-        f"{ruta_admin}/desactivar",
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        f"{ruta_operador}/desactivar",
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     reactivar = solicitar_con_cookies(
         client,
         "POST",
-        f"{ruta_admin}/reactivar",
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        f"{ruta_operador}/reactivar",
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     assert desactivar.status_code == reactivar.status_code == 200
 
@@ -913,7 +923,7 @@ def test_desactivar_y_reactivar_no_reviven_el_enlace_anterior(
     db.rollback()
     ruta_reenvio = f"{RUTA_CREAR_OPERADOR}/{operador.id}/reenviar-invitacion"
     respuesta = solicitar_con_cookies(
-        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_admin}
+        client, "POST", ruta_reenvio, cookies={NOMBRE_COOKIE_SESION: token_owner}
     )
     assert respuesta.status_code == 200
     assert len(transporte.mensajes) == 1
@@ -925,7 +935,7 @@ def test_dos_completados_simultaneos_consumen_un_solo_desafio(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_enlace, _transporte, _settings, _admin = crear_invitacion(
+    operador, token_enlace, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -975,22 +985,29 @@ def test_duplicados_admin_y_correo_normalizado_no_envian_invitaciones_extra(
         "app.api.rutas.operadores.crear_transporte_correo",
         lambda _settings: transporte,
     )
-    token_admin = crear_admin_autenticado(db)
-    sesion_admin = db.scalar(
-        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_admin))
+    token_owner = crear_owner_autenticado(db)
+    sesion_owner = db.scalar(
+        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_owner))
     )
-    if sesion_admin is None:
-        pytest.fail("No se encontro la sesion sintetica ADMIN.")
-    admin = db.get(Usuario, sesion_admin.usuario_id)
-    if admin is None:
-        pytest.fail("No se encontro la cuenta sintetica ADMIN.")
+    if sesion_owner is None:
+        pytest.fail("No se encontro la sesion sintetica OWNER.")
+    db.rollback()
+    admin = crear_admin(
+        db,
+        nombre="Katherine",
+        apellido_paterno="Johnson",
+        apellido_materno="Coleman",
+        correo=correo_de_prueba(),
+        contrasena=CONTRASENA_OWNER,
+        confirmacion_contrasena=CONTRASENA_OWNER,
+    ).usuario
 
     duplicado_admin = solicitar_con_cookies(
         client,
         "POST",
         RUTA_CREAR_OPERADOR,
         json=cuerpo_creacion_operador(admin.correo),
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     exigir_estado_http(duplicado_admin, 409, "Correo ya asignado a ADMIN")
     if transporte.mensajes:
@@ -1003,7 +1020,7 @@ def test_duplicados_admin_y_correo_normalizado_no_envian_invitaciones_extra(
         "POST",
         RUTA_CREAR_OPERADOR,
         json=cuerpo_creacion_operador(correo_original),
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     exigir_estado_http(primera_alta, 201, "Alta sintetica inicial")
     duplicado_normalizado = solicitar_con_cookies(
@@ -1011,7 +1028,7 @@ def test_duplicados_admin_y_correo_normalizado_no_envian_invitaciones_extra(
         "POST",
         RUTA_CREAR_OPERADOR,
         json=cuerpo_creacion_operador(f"  {correo_normalizado.upper()}  "),
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     exigir_estado_http(
         duplicado_normalizado, 409, "Correo equivalente por mayusculas y espacios"
@@ -1052,7 +1069,7 @@ def test_creacion_rechaza_campos_controlados_y_limites_sin_reflejar_entradas(
         "app.api.rutas.operadores.crear_transporte_correo",
         lambda _settings: transporte,
     )
-    token_admin = crear_admin_autenticado(db)
+    token_owner = crear_owner_autenticado(db)
     correo_sintetico = f"sp031-inyeccion-{uuid4().hex}@example.com"
     solicitud = cuerpo_creacion_operador(correo_sintetico)
     campos_controlados: dict[str, object] = {
@@ -1075,7 +1092,7 @@ def test_creacion_rechaza_campos_controlados_y_limites_sin_reflejar_entradas(
             "POST",
             RUTA_CREAR_OPERADOR,
             json={**solicitud, campo: valor},
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         exigir_estado_http(respuesta, 422, f"Campo no permitido {campo}")
         respuestas.append(respuesta.text)
@@ -1099,7 +1116,7 @@ def test_creacion_rechaza_campos_controlados_y_limites_sin_reflejar_entradas(
             "POST",
             RUTA_CREAR_OPERADOR,
             json=solicitud_invalida,
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         exigir_estado_http(
             respuesta, 422, "Identidad sintetica invalida o fuera de limites"
@@ -1126,7 +1143,7 @@ def test_creacion_concurrente_del_mismo_correo_normalizado_es_atomica(
         "app.api.rutas.operadores.crear_transporte_correo",
         lambda _settings: transporte,
     )
-    token_admin = crear_admin_autenticado(db)
+    token_owner = crear_owner_autenticado(db)
     correo = f"sp031-race-{uuid4().hex}@example.com"
     barrera = Barrier(2)
     monkeypatch.setattr(
@@ -1140,7 +1157,7 @@ def test_creacion_concurrente_del_mismo_correo_normalizado_es_atomica(
             "POST",
             RUTA_CREAR_OPERADOR,
             json=cuerpo_creacion_operador(f" {correo.upper()} "),
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         return respuesta.status_code
 
@@ -1307,7 +1324,7 @@ def test_policy_de_contrasena_respeta_limites_y_no_consume_el_desafio_invalido(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _operador, token, _transporte, _settings, _admin = crear_invitacion(
+    _operador, token, _transporte, _settings, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1347,7 +1364,7 @@ def test_policy_de_contrasena_respeta_limites_y_no_consume_el_desafio_invalido(
     exigir_sin_exposicion(respuestas, contrasenas_invalidas)
 
     db.rollback()
-    operador_minimo, token_minimo, _mail, _config, _admin_token = crear_invitacion(
+    operador_minimo, token_minimo, _mail, _config, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1371,7 +1388,7 @@ def test_policy_de_contrasena_respeta_limites_y_no_consume_el_desafio_invalido(
         pytest.fail("La contrasena minima valida no completo la activacion.")
 
     db.rollback()
-    operador_maximo, token_maximo, _mail, _config, _admin_token = crear_invitacion(
+    operador_maximo, token_maximo, _mail, _config, _owner_token = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1472,7 +1489,7 @@ def test_login_no_acepta_fijacion_y_me_ignora_identidad_inyectada(
         headers={"X-Role": "ADMIN", "X-User-ID": "1"},
     )
     exigir_estado_http(
-        intento_admin, 401, "OPERADOR intenta usar una ruta ADMIN directa"
+        intento_admin, 403, "OPERADOR sin permiso intenta usar la gestion de cuentas"
     )
     db.rollback()
     if db.scalar(select(Usuario.id).where(Usuario.correo == objetivo)) is not None:
@@ -1515,14 +1532,14 @@ def test_secretos_solo_aparecen_en_canales_de_entrega_autorizados(
         "app.api.rutas.activaciones_operador.get_settings",
         lambda: settings,
     )
-    token_admin = crear_admin_autenticado(db)
+    token_owner = crear_owner_autenticado(db)
     correo = correo_de_prueba()
     creacion = solicitar_con_cookies(
         client,
         "POST",
         RUTA_CREAR_OPERADOR,
         json=cuerpo_creacion_operador(correo),
-        cookies={NOMBRE_COOKIE_SESION: token_admin},
+        cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
     exigir_estado_http(creacion, 201, "Alta sintetica para comprobar exposicion")
     token_invitacion = token_del_ultimo_mensaje(transporte)
@@ -1616,8 +1633,8 @@ def test_secretos_solo_aparecen_en_canales_de_entrega_autorizados(
         caplog.text,
     ]
     secretos = [
-        token_admin,
-        hash_token_sesion(token_admin),
+        token_owner,
+        hash_token_sesion(token_owner),
         token_invitacion,
         hash_token_activacion(token_invitacion),
         desafio,
@@ -1652,7 +1669,7 @@ def test_reenvio_concurrente_con_canje_invalida_cualquier_desafio_anterior(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_anterior, transporte, _settings, token_admin = crear_invitacion(
+    operador, token_anterior, transporte, _settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1684,7 +1701,7 @@ def test_reenvio_concurrente_con_canje_invalida_cualquier_desafio_anterior(
             client,
             "POST",
             f"{RUTA_CREAR_OPERADOR}/{operador_id}/reenviar-invitacion",
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         return respuesta.status_code
 
@@ -1778,7 +1795,7 @@ def test_reenvio_concurrente_con_completar_no_reactiva_un_desafio_supersedido(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_anterior, transporte, _settings, token_admin = crear_invitacion(
+    operador, token_anterior, transporte, _settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1813,7 +1830,7 @@ def test_reenvio_concurrente_con_completar_no_reactiva_un_desafio_supersedido(
             client,
             "POST",
             f"{RUTA_CREAR_OPERADOR}/{operador_id}/reenviar-invitacion",
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         return respuesta.status_code
 
@@ -1908,7 +1925,7 @@ def test_desactivar_concurrente_con_completar_deja_cuenta_bloqueada_y_sin_sesion
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    operador, token_enlace, _transporte, _settings, token_admin = crear_invitacion(
+    operador, token_enlace, _transporte, _settings, token_owner = crear_invitacion(
         db,
         client,
         monkeypatch,
@@ -1933,7 +1950,7 @@ def test_desactivar_concurrente_con_completar_deja_cuenta_bloqueada_y_sin_sesion
             client,
             "POST",
             f"{RUTA_CREAR_OPERADOR}/{operador_id}/desactivar",
-            cookies={NOMBRE_COOKIE_SESION: token_admin},
+            cookies={NOMBRE_COOKIE_SESION: token_owner},
         )
         return respuesta.status_code
 

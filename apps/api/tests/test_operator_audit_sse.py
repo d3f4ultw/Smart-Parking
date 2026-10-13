@@ -141,6 +141,45 @@ def _crear_sesion(db: Session, usuario: Usuario) -> str:
     return token
 
 
+def _crear_owner(db: Session) -> tuple[int, str]:
+    owner_id = db.scalar(
+        select(Usuario.id).where(
+            Usuario.rol == RolUsuario.OWNER.value,
+            Usuario.esta_activo.is_(True),
+        )
+    )
+    db.rollback()
+    if owner_id is None:
+        owner = Usuario(
+            nombre="Ada",
+            apellido_paterno="Lovelace",
+            apellido_materno="Byron",
+            correo=_correo(),
+            contrasena_hash=HASH_SINTETICO,
+            rol=RolUsuario.OWNER.value,
+            correo_verificado=True,
+            debe_cambiar_contrasena=False,
+            esta_activo=True,
+        )
+        db.add(owner)
+        db.flush()
+        owner_id = owner.id
+        db.commit()
+        db.rollback()
+
+    token = f"cookie-owner-sintetica-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=owner_id,
+            token_hash=hash_token_sesion(token),
+            expira_en=datetime.now(UTC) + timedelta(minutes=30),
+        )
+    )
+    db.commit()
+    db.rollback()
+    return owner_id, token
+
+
 def _crear_operador(db: Session, admin_id: int, correo: str | None = None) -> Usuario:
     resultado = crear_operador(
         db,
@@ -183,12 +222,12 @@ def _crear_operador_http(
     return respuesta, crear_transporte
 
 
-def test_creacion_http_guarda_el_admin_autenticado_y_evento_unico(
+def test_creacion_http_guarda_el_owner_autenticado_y_evento_unico(
     db: Session,
     client: TestClient,
 ) -> None:
-    admin_a_id, token_a = _crear_admin(db)
-    admin_b_id, token_b = _crear_admin(db)
+    owner_a_id, token_a = _crear_owner(db)
+    owner_b_id, token_b = _crear_owner(db)
     correo_a = _correo()
     correo_b = _correo()
 
@@ -205,8 +244,8 @@ def test_creacion_http_guarda_el_admin_autenticado_y_evento_unico(
     operador_b = db.scalar(select(Usuario).where(Usuario.correo == correo_b))
     assert operador_a is not None
     assert operador_b is not None
-    assert operador_a.creado_por_usuario_id == admin_a_id
-    assert operador_b.creado_por_usuario_id == admin_b_id
+    assert operador_a.creado_por_usuario_id == owner_a_id
+    assert operador_b.creado_por_usuario_id == owner_b_id
     assert operador_a.creado_en.tzinfo is not None
     assert operador_b.creado_en.tzinfo is not None
 
@@ -236,7 +275,7 @@ def test_solicitud_no_puede_inyectar_campos_de_auditoria(
     campo: str,
     valor: object,
 ) -> None:
-    _admin_id, token = _crear_admin(db)
+    _owner_id, token = _crear_owner(db)
     respuesta, correo_mock = _crear_operador_http(
         client,
         token,
@@ -253,8 +292,8 @@ def test_creador_y_timestamp_se_exponen_en_lista_y_detalle_sin_secretos(
     db: Session,
     client: TestClient,
 ) -> None:
-    admin_id, token = _crear_admin(db)
-    operador = _crear_operador(db, admin_id)
+    owner_id, token = _crear_owner(db)
+    operador = _crear_operador(db, owner_id)
     client.cookies.set(NOMBRE_COOKIE, token)
     with patch(
         "app.api.rutas.operadores.get_settings",
@@ -271,16 +310,16 @@ def test_creador_y_timestamp_se_exponen_en_lista_y_detalle_sin_secretos(
         fila for fila in lista.json()["operadores"] if fila["id"] == operador.id
     )
     registro_detalle = detalle.json()
-    admin = db.get(Usuario, admin_id)
-    assert admin is not None
+    owner = db.get(Usuario, owner_id)
+    assert owner is not None
     for registro in (registro_lista, registro_detalle):
         assert datetime.fromisoformat(registro["creado_en"]).utcoffset() is not None
         assert registro["creado_por"] == {
-            "id": admin_id,
+            "id": owner_id,
             "nombre": "Ada",
             "apellido_paterno": "Lovelace",
             "apellido_materno": "Byron",
-            "correo": admin.correo,
+            "correo": owner.correo,
         }
         assert set(registro["creado_por"]) == {
             "id",
@@ -306,7 +345,7 @@ def test_listado_captura_cursor_antes_de_consultar_la_pagina(
     db: Session,
     client: TestClient,
 ) -> None:
-    _admin_id, token = _crear_admin(db)
+    _owner_id, token = _crear_owner(db)
     llamadas: list[str] = []
     obtener_marca_original = rutas_operadores.obtener_marca_eventos
     listar_original = rutas_operadores.listar_operadores
