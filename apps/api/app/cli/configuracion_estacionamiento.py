@@ -19,6 +19,7 @@ from app.cli.presentacion import (
 from app.core.database import SessionLocal
 from app.servicios.configuracion_estacionamiento import (
     LIMITE_HISTORIAL_MODALIDAD,
+    AccesoEstacionamientoSuspendidoError,
     ConfiguracionDesactualizadaError,
     ConfiguracionEstacionamientoDTO,
     HistorialModalidadDTO,
@@ -121,6 +122,17 @@ def _seleccionar_modalidad(
                 modalidad_nueva,
                 revision_esperada=_revision(configuracion_actual),
             )
+        except AccesoEstacionamientoSuspendidoError:
+            db.rollback()
+            print(
+                _estilizar(
+                    "No se puede cambiar la modalidad mientras el acceso está "
+                    "suspendido.",
+                    ANSI_AMARILLO,
+                )
+            )
+            _pausar()
+            return
         except ConfiguracionDesactualizadaError as error:
             db.rollback()
             print(

@@ -22,6 +22,14 @@ class ModalidadEstacionamientoInvalidaError(ValueError):
     """Indica que la modalidad no pertenece al catalogo soportado."""
 
 
+class AccesoEstacionamientoSuspendidoError(RuntimeError):
+    """Indica que una modalidad no puede cambiarse con el acceso suspendido."""
+
+
+class EstacionamientoSinModalidadError(RuntimeError):
+    """Indica que no se puede suspender un estacionamiento sin configurar."""
+
+
 @dataclass(frozen=True, slots=True)
 class ConfiguracionEstacionamientoDTO:
     """Estado vigente de la configuracion, apto para mostrar en la CLI."""
@@ -29,6 +37,7 @@ class ConfiguracionEstacionamientoDTO:
     modalidad: ModalidadEstacionamiento
     revision: int
     actualizado_en: datetime
+    acceso_suspendido: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +55,14 @@ class ResultadoCambioModalidad:
 
     configuracion: ConfiguracionEstacionamientoDTO
     modalidad_anterior: ModalidadEstacionamiento | None
+    cambio_realizado: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ResultadoCambioAcceso:
+    """Resultado de una solicitud para suspender o reanudar el acceso."""
+
+    configuracion: ConfiguracionEstacionamientoDTO | None
     cambio_realizado: bool
 
 
@@ -67,6 +84,7 @@ def _crear_configuracion_dto(
         modalidad=configuracion.modalidad,  # type: ignore[arg-type]
         revision=configuracion.revision,
         actualizado_en=configuracion.actualizado_en,
+        acceso_suspendido=configuracion.acceso_suspendido,
     )
 
 
@@ -176,6 +194,9 @@ def cambiar_modalidad_estacionamiento(
                 raise ConfiguracionDesactualizadaError(estado_actual)
 
             modalidad_anterior = _validar_modalidad(configuracion.modalidad)
+            if configuracion.acceso_suspendido:
+                raise AccesoEstacionamientoSuspendidoError
+
             if modalidad_anterior == modalidad_validada:
                 return ResultadoCambioModalidad(
                     configuracion=_crear_configuracion_dto(configuracion),
@@ -200,6 +221,62 @@ def cambiar_modalidad_estacionamiento(
             return ResultadoCambioModalidad(
                 configuracion=_crear_configuracion_dto(configuracion),
                 modalidad_anterior=modalidad_anterior,
+                cambio_realizado=True,
+            )
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+def cambiar_estado_acceso_estacionamiento(
+    db: Session,
+    acceso_suspendido: bool,
+    *,
+    revision_esperada: int,
+) -> ResultadoCambioAcceso:
+    """Actualiza la suspension usando la revision de la configuracion vigente."""
+
+    if type(acceso_suspendido) is not bool:
+        raise ValueError("El estado de suspension debe ser booleano.")
+    if type(revision_esperada) is not int or revision_esperada < 0:
+        raise ValueError("La revision esperada debe ser un entero no negativo.")
+
+    try:
+        db.rollback()
+        with db.begin():
+            configuracion = db.scalar(
+                select(ConfiguracionEstacionamiento)
+                .where(ConfiguracionEstacionamiento.id == 1)
+                .with_for_update()
+            )
+            if configuracion is None:
+                if revision_esperada != 0:
+                    raise ConfiguracionDesactualizadaError(None)
+                if acceso_suspendido:
+                    raise EstacionamientoSinModalidadError
+                return ResultadoCambioAcceso(
+                    configuracion=None,
+                    cambio_realizado=False,
+                )
+
+            if configuracion.revision != revision_esperada:
+                raise ConfiguracionDesactualizadaError(
+                    _crear_configuracion_dto(configuracion)
+                )
+
+            if configuracion.acceso_suspendido == acceso_suspendido:
+                return ResultadoCambioAcceso(
+                    configuracion=_crear_configuracion_dto(configuracion),
+                    cambio_realizado=False,
+                )
+
+            configuracion.acceso_suspendido = acceso_suspendido
+            configuracion.revision += 1
+            configuracion.actualizado_en = func.now()
+            db.flush()
+            db.refresh(configuracion)
+            return ResultadoCambioAcceso(
+                configuracion=_crear_configuracion_dto(configuracion),
                 cambio_realizado=True,
             )
     except SQLAlchemyError:

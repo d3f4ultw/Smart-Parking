@@ -17,8 +17,11 @@ from app.models import (
     HistorialModalidadEstacionamiento,
 )
 from app.servicios.configuracion_estacionamiento import (
+    AccesoEstacionamientoSuspendidoError,
     ConfiguracionDesactualizadaError,
+    EstacionamientoSinModalidadError,
     ModalidadEstacionamientoInvalidaError,
+    cambiar_estado_acceso_estacionamiento,
     cambiar_modalidad_estacionamiento,
     listar_historial_modalidad,
     obtener_configuracion_estacionamiento,
@@ -113,6 +116,122 @@ def test_seleccionar_modalidad_actual_no_modifica_revision_ni_historial(
         resultado.configuracion.actualizado_en == inicial.configuracion.actualizado_en
     )
     assert len(listar_historial_modalidad(db)) == 1
+
+
+def test_suspend_resume_preserva_modalidad_y_solo_revision_cambia_estado(
+    db: Session,
+) -> None:
+    inicial = cambiar_modalidad_estacionamiento(
+        db,
+        "MIXTO",
+        revision_esperada=0,
+    )
+    configuracion = db.get(ConfiguracionEstacionamiento, 1)
+    assert configuracion is not None
+    configuracion.actualizado_en = inicial.configuracion.actualizado_en.replace(
+        year=2000
+    )
+    db.commit()
+    db.rollback()
+
+    suspendida = cambiar_estado_acceso_estacionamiento(
+        db,
+        True,
+        revision_esperada=1,
+    )
+    assert suspendida.cambio_realizado is True
+    assert suspendida.configuracion is not None
+    assert suspendida.configuracion.modalidad == "MIXTO"
+    assert suspendida.configuracion.acceso_suspendido is True
+    assert suspendida.configuracion.revision == 2
+    assert suspendida.configuracion.actualizado_en.year > 2000
+    assert [
+        (fila.modalidad_anterior, fila.modalidad_nueva)
+        for fila in listar_historial_modalidad(db)
+    ] == [
+        (None, "MIXTO")
+    ]
+
+    repetida = cambiar_estado_acceso_estacionamiento(
+        db,
+        True,
+        revision_esperada=2,
+    )
+    assert repetida.cambio_realizado is False
+    assert repetida.configuracion is not None
+    assert repetida.configuracion.revision == 2
+    assert (
+        repetida.configuracion.actualizado_en
+        == suspendida.configuracion.actualizado_en
+    )
+    assert len(listar_historial_modalidad(db)) == 1
+
+    reanudada = cambiar_estado_acceso_estacionamiento(
+        db,
+        False,
+        revision_esperada=2,
+    )
+    assert reanudada.cambio_realizado is True
+    assert reanudada.configuracion is not None
+    assert reanudada.configuracion.modalidad == "MIXTO"
+    assert reanudada.configuracion.acceso_suspendido is False
+    assert reanudada.configuracion.revision == 3
+    assert len(listar_historial_modalidad(db)) == 1
+
+
+def test_suspension_requiere_modalidad_y_rechaza_revision_obsoleta(
+    db: Session,
+) -> None:
+    reanudada_sin_configurar = cambiar_estado_acceso_estacionamiento(
+        db,
+        False,
+        revision_esperada=0,
+    )
+    assert reanudada_sin_configurar.configuracion is None
+    assert reanudada_sin_configurar.cambio_realizado is False
+    with pytest.raises(EstacionamientoSinModalidadError):
+        cambiar_estado_acceso_estacionamiento(
+            db,
+            True,
+            revision_esperada=0,
+        )
+    assert obtener_configuracion_estacionamiento(db) is None
+
+    cambiar_modalidad_estacionamiento(db, "PRIVADO", revision_esperada=0)
+    with pytest.raises(ConfiguracionDesactualizadaError):
+        cambiar_estado_acceso_estacionamiento(
+            db,
+            True,
+            revision_esperada=0,
+        )
+    estado = obtener_configuracion_estacionamiento(db)
+    assert estado is not None
+    assert estado.acceso_suspendido is False
+    assert estado.revision == 1
+
+
+def test_modalidad_no_cambia_mientras_el_acceso_esta_suspendido(db: Session) -> None:
+    cambiar_modalidad_estacionamiento(db, "PRIVADO", revision_esperada=0)
+    cambiar_estado_acceso_estacionamiento(db, True, revision_esperada=1)
+
+    with pytest.raises(AccesoEstacionamientoSuspendidoError):
+        cambiar_modalidad_estacionamiento(
+            db,
+            "PUBLICO",
+            revision_esperada=2,
+        )
+
+    estado = obtener_configuracion_estacionamiento(db)
+    assert estado is not None
+    assert estado.modalidad == "PRIVADO"
+    assert estado.acceso_suspendido is True
+    assert estado.revision == 2
+    assert [
+        (fila.modalidad_anterior, fila.modalidad_nueva)
+        for fila in listar_historial_modalidad(db)
+    ] == [
+        (None, "PRIVADO")
+    ]
 
 
 def test_cambios_confirmados_persisten_al_renovar_la_sesion(db: Session) -> None:
@@ -287,6 +406,28 @@ def test_cli_persiste_modalidad_solo_en_sesion_aislada_y_muestra_exito(
     assert [(fila.modalidad_anterior, fila.modalidad_nueva) for fila in historial] == [
         (None, "PUBLICO")
     ]
+
+
+def test_cli_muestra_bloqueo_seguro_al_cambiar_modalidad_suspendida(
+    db: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cambiar_modalidad_estacionamiento(db, "PRIVADO", revision_esperada=0)
+    cambiar_estado_acceso_estacionamiento(db, True, revision_esperada=1)
+
+    assert ejecutar_cli(db, monkeypatch, ["1", "2", "1", "", "0"]) == 0
+
+    salida = capsys.readouterr()
+    assert (
+        "No se puede cambiar la modalidad mientras el acceso está suspendido."
+        in salida.out
+    )
+    assert "Traceback" not in salida.out + salida.err
+    estado = obtener_configuracion_estacionamiento(db)
+    assert estado is not None
+    assert estado.modalidad == "PRIVADO"
+    assert estado.revision == 2
 
 
 def test_cli_historial_es_reciente_y_no_muestra_identidades(

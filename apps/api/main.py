@@ -9,17 +9,21 @@ from starlette.responses import Response
 from app.api.rutas import (
     RUTA_ACTIVACION_OPERADOR,
     RUTA_ACTIVACION_PROPIETARIO,
+    RUTA_CONFIGURACION_ACCESO,
+    RUTA_CONFIGURACION_MODALIDAD,
     RUTA_CREAR_OPERADOR,
     RUTA_LOGIN,
     RUTA_LOGOUT,
-    gestion_propietario_router,
     RUTA_ME,
     activaciones_operador_router,
     activaciones_propietario_router,
     activaciones_router,
     autenticacion_router,
     cajones_router,
+    configuracion_acceso_router,
+    configuracion_estacionamiento_router,
     eventos_tiempo_real_router,
+    gestion_propietario_router,
     operadores_router,
     reenvio_activacion_router,
 )
@@ -53,6 +57,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Smart Parking API", lifespan=lifespan)
 app.state.database_engine = engine
 app.include_router(autenticacion_router)
+app.include_router(configuracion_estacionamiento_router)
+app.include_router(configuracion_acceso_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
 app.include_router(operadores_router)
@@ -92,6 +98,8 @@ RUTAS_SIN_CACHE = (
         RUTA_LOGIN,
         RUTA_LOGOUT,
         RUTA_ME,
+        RUTA_CONFIGURACION_MODALIDAD,
+        RUTA_CONFIGURACION_ACCESO,
     }
 )
 
@@ -101,7 +109,7 @@ async def evitar_cache_en_autenticacion(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
 ) -> Response:
-    """Evita cachear respuestas de los endpoints de autenticacion."""
+    """Evita cachear respuestas privadas de autenticación y configuración."""
 
     response = await call_next(request)
     if (

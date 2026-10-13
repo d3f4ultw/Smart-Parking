@@ -38,6 +38,10 @@ from app.servicios.cajones import (
     cambiar_estado_operativo,
     obtener_estado_efectivo,
 )
+from app.servicios.configuracion_estacionamiento import (
+    cambiar_estado_acceso_estacionamiento,
+    cambiar_modalidad_estacionamiento,
+)
 
 NOMBRE_COOKIE_SESION = "smart_parking_session"
 HASH_SINTETICO = "hash-sintetico-cajones-test"
@@ -408,6 +412,8 @@ def test_dispositivo_actualiza_fisico_sin_invadir_sesion_ni_estado_operativo(
     cajon = lectura.json()["cajones"][0]
     assert cajon["estado_fisico"] == "LIBRE"
     assert cajon["estado_operativo"] == "MANTENIMIENTO"
+
+
     assert cajon["motivo_operativo"] == "Inspeccion"
     assert cajon["estado_efectivo"] == "NO_DISPONIBLE"
 
@@ -428,6 +434,25 @@ def test_dispositivo_actualiza_fisico_sin_invadir_sesion_ni_estado_operativo(
         headers=solo_dispositivo,
     )
     assert invalido.status_code == 422
+
+
+def test_reporte_de_ocupacion_sigue_aceptado_con_acceso_suspendido(
+    client: TestClient,
+    db: Session,
+    token_dispositivo: str,
+) -> None:
+    cambiar_modalidad_estacionamiento(db, "PRIVADO", revision_esperada=0)
+    cambiar_estado_acceso_estacionamiento(db, True, revision_esperada=1)
+
+    respuesta = client.put(
+        "/api/cajones/1/estado-fisico",
+        json={"ocupado": True},
+        headers={"Authorization": f"Bearer {token_dispositivo}"},
+    )
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["estado_fisico"] == "OCUPADO"
+    assert respuesta.json()["cambio_aplicado"] is True
 
 
 def test_dispositivo_desactivado_si_falta_secreto_configurado(
