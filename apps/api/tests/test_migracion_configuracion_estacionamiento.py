@@ -16,6 +16,7 @@ from sqlalchemy.engine import URL
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REVISION_ANTERIOR = "20261008_0001"
 REVISION_NUEVA = "20261010_0001"
+REVISION_SUSPENSION = "20261012_0001"
 
 
 @pytest.fixture
@@ -193,4 +194,99 @@ def test_downgrade_rechaza_eliminar_una_modalidad_persistida(
     assert actual.returncode == 0
     assert REVISION_NUEVA in actual.stdout
     assert inspect(motor).has_table("configuracion_estacionamiento")
+    motor.dispose()
+
+
+def test_upgrade_suspension_preserva_configuracion_historial_y_falta_de_defaults(
+    migration_database: tuple[URL, dict[str, str]],
+) -> None:
+    url, entorno = migration_database
+    motor = create_engine(url, pool_pre_ping=True)
+    base_modalidad = ejecutar_alembic(entorno, "upgrade", REVISION_NUEVA)
+    assert base_modalidad.returncode == 0, base_modalidad.stderr
+
+    fecha_anterior = "2000-01-01 00:00:00+00"
+    with motor.begin() as conexion:
+        conexion.execute(
+            text(
+                "INSERT INTO configuracion_estacionamiento "
+                "(id, modalidad, revision, actualizado_en) "
+                "VALUES (1, 'MIXTO', 4, :actualizado_en)"
+            ),
+            {"actualizado_en": fecha_anterior},
+        )
+        conexion.execute(
+            text(
+                "INSERT INTO historial_modalidad_estacionamiento "
+                "(configuracion_id, revision, modalidad_anterior, modalidad_nueva) "
+                "VALUES (1, 4, 'PUBLICO', 'MIXTO')"
+            )
+        )
+
+    upgrade = ejecutar_alembic(entorno, "upgrade", REVISION_SUSPENSION)
+    assert upgrade.returncode == 0, upgrade.stderr
+
+    with motor.connect() as conexion:
+        configuracion = conexion.execute(
+            text(
+                "SELECT modalidad, revision, actualizado_en, acceso_suspendido "
+                "FROM configuracion_estacionamiento WHERE id = 1"
+            )
+        ).one()
+        historial = conexion.execute(
+            text(
+                "SELECT configuracion_id, revision, modalidad_anterior, "
+                "modalidad_nueva FROM historial_modalidad_estacionamiento"
+            )
+        ).all()
+        assert configuracion.modalidad == "MIXTO"
+        assert configuracion.revision == 4
+        assert configuracion.actualizado_en.isoformat().startswith("2000-01-01")
+        assert configuracion.acceso_suspendido is False
+        assert historial == [(1, 4, "PUBLICO", "MIXTO")]
+
+    downgrade = ejecutar_alembic(entorno, "downgrade", "20261011_0007")
+    assert downgrade.returncode == 0, downgrade.stderr
+    assert all(
+        columna["name"] != "acceso_suspendido"
+        for columna in inspect(motor).get_columns("configuracion_estacionamiento")
+    )
+    motor.dispose()
+
+
+def test_upgrade_suspension_no_crea_modalidad_y_downgrade_protege_estado_activo(
+    migration_database: tuple[URL, dict[str, str]],
+) -> None:
+    url, entorno = migration_database
+    motor = create_engine(url, pool_pre_ping=True)
+    upgrade = ejecutar_alembic(entorno, "upgrade", REVISION_SUSPENSION)
+    assert upgrade.returncode == 0, upgrade.stderr
+
+    with motor.connect() as conexion:
+        assert (
+            conexion.scalar(
+                text("SELECT count(*) FROM configuracion_estacionamiento")
+            )
+            == 0
+        )
+
+    with motor.begin() as conexion:
+        conexion.execute(
+            text(
+                "INSERT INTO configuracion_estacionamiento "
+                "(id, modalidad, revision, acceso_suspendido) "
+                "VALUES (1, 'PRIVADO', 2, TRUE)"
+            )
+        )
+
+    downgrade = ejecutar_alembic(entorno, "downgrade", "20261011_0007")
+    assert downgrade.returncode != 0
+    assert "No se puede revertir" in downgrade.stderr
+    actual = ejecutar_alembic(entorno, "current")
+    assert actual.returncode == 0
+    assert REVISION_SUSPENSION in actual.stdout
+    assert any(
+        columna["name"] == "acceso_suspendido"
+        for columna in inspect(motor).get_columns("configuracion_estacionamiento")
+    )
     motor.dispose()

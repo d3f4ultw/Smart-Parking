@@ -545,6 +545,265 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
+    await suite.test('OWNER modality configuration BFF filters cookies and request fields', async () => {
+      const sessionToken = marker()
+      const unrelatedCookie = marker()
+      const deviceToken = marker()
+      const hiddenField = marker()
+      sensitiveMarkers.push(sessionToken, unrelatedCookie, deviceToken, hiddenField)
+      const cookie = 'smart_parking_session=' + sessionToken
+        + '; unrelated=' + unrelatedCookie
+      const payload = {
+        modalidad: 'PRIVADO',
+        revision: 4,
+        acceso_suspendido: false,
+      }
+      const lectura = await send(
+        '/api/admin/configuracion/modalidad',
+        {
+          headers: {
+            cookie,
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
+            'x-user-id': '41',
+            authorization: 'Bearer ' + deviceToken,
+          },
+        },
+        jsonPlan(200, payload),
+      )
+
+      assert.equal(lectura.response.status, 200)
+      assertForwarded(lectura, 'GET', '/api/admin/configuracion/modalidad')
+      assert.equal(
+        lectura.upstreamRequest?.cookie,
+        'smart_parking_session=' + sessionToken,
+        'Only the session cookie reaches FastAPI',
+      )
+      assert.equal(lectura.upstreamRequest?.role, undefined)
+      assert.equal(lectura.upstreamRequest?.roleAlias, undefined)
+      assert.equal(lectura.upstreamRequest?.userId, undefined)
+      assert.equal(lectura.upstreamRequest?.authorization, undefined)
+      assert.equal(lectura.response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(JSON.parse(lectura.body), payload)
+
+      harness.clearRequests()
+      const solicitud = { modalidad: 'MIXTO', revision_esperada: 4 }
+      const body = JSON.stringify(solicitud)
+      const escritura = await send(
+        '/api/admin/configuracion/modalidad',
+        {
+          method: 'PUT',
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
+            'x-user-id': '41',
+            authorization: 'Bearer ' + deviceToken,
+          },
+          body,
+        },
+        jsonPlan(200, {
+          modalidad: 'MIXTO',
+          revision: 5,
+          acceso_suspendido: false,
+        }),
+      )
+      assert.equal(escritura.response.status, 200)
+      assertForwarded(escritura, 'PUT', '/api/admin/configuracion/modalidad')
+      assert.equal(
+        escritura.upstreamRequest?.cookie,
+        'smart_parking_session=' + sessionToken,
+      )
+      assert.equal(escritura.upstreamRequest?.body, body)
+      assert.equal(escritura.upstreamRequest?.contentType?.split(';')[0], 'application/json')
+      assert.equal(escritura.upstreamRequest?.role, undefined)
+      assert.equal(escritura.upstreamRequest?.roleAlias, undefined)
+      assert.equal(escritura.upstreamRequest?.userId, undefined)
+      assert.equal(escritura.upstreamRequest?.authorization, undefined)
+      assert.equal(escritura.response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(JSON.parse(escritura.body), {
+        modalidad: 'MIXTO',
+        revision: 5,
+        acceso_suspendido: false,
+      })
+
+      harness.clearRequests()
+      const solicitudesAntesDeInvalidas = harness.requests.length
+      for (const opciones of [
+        {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            modalidad: 'MIXTO',
+            revision_esperada: 4,
+            configuracion_privada: hiddenField,
+          }),
+        },
+        {
+          headers: { 'content-type': 'text/plain' },
+          body: JSON.stringify(solicitud),
+        },
+      ]) {
+        const rechazo = await send(
+          '/api/admin/configuracion/modalidad',
+          { method: 'PUT', ...opciones },
+        )
+        assert.ok(rechazo.response.status >= 400)
+        assert.equal(rechazo.upstreamRequest, undefined)
+        assert.equal(rechazo.response.headers.get('cache-control'), 'no-store')
+        assertNoSensitiveBody(rechazo.body)
+      }
+      assert.equal(harness.requests.length, solicitudesAntesDeInvalidas)
+
+      harness.clearRequests()
+      const solicitudAcceso = {
+        acceso_suspendido: true,
+        revision_esperada: 5,
+      }
+      const cuerpoAcceso = JSON.stringify(solicitudAcceso)
+      const cambioAcceso = await send(
+        '/api/admin/configuracion/acceso',
+        {
+          method: 'PUT',
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
+            'x-user-id': '41',
+            authorization: 'Bearer ' + deviceToken,
+          },
+          body: cuerpoAcceso,
+        },
+        jsonPlan(200, {
+          modalidad: 'MIXTO',
+          revision: 6,
+          acceso_suspendido: true,
+        }),
+      )
+      assert.equal(cambioAcceso.response.status, 200)
+      assertForwarded(cambioAcceso, 'PUT', '/api/admin/configuracion/acceso')
+      assert.equal(
+        cambioAcceso.upstreamRequest?.cookie,
+        'smart_parking_session=' + sessionToken,
+      )
+      assert.equal(cambioAcceso.upstreamRequest?.body, cuerpoAcceso)
+      assert.equal(cambioAcceso.upstreamRequest?.contentType?.split(';')[0], 'application/json')
+      assert.equal(cambioAcceso.upstreamRequest?.role, undefined)
+      assert.equal(cambioAcceso.upstreamRequest?.roleAlias, undefined)
+      assert.equal(cambioAcceso.upstreamRequest?.userId, undefined)
+      assert.equal(cambioAcceso.upstreamRequest?.authorization, undefined)
+      assert.equal(cambioAcceso.response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(JSON.parse(cambioAcceso.body), {
+        modalidad: 'MIXTO',
+        revision: 6,
+        acceso_suspendido: true,
+      })
+
+      harness.clearRequests()
+      for (const opciones of [
+        {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            ...solicitudAcceso,
+            configuracion_privada: hiddenField,
+          }),
+        },
+        {
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ acceso_suspendido: 'true', revision_esperada: 5 }),
+        },
+        {
+          headers: { 'content-type': 'text/plain' },
+          body: cuerpoAcceso,
+        },
+      ]) {
+        const rechazo = await send(
+          '/api/admin/configuracion/acceso',
+          { method: 'PUT', ...opciones },
+        )
+        assert.ok(rechazo.response.status >= 400)
+        assert.equal(rechazo.upstreamRequest, undefined)
+        assert.equal(rechazo.response.headers.get('cache-control'), 'no-store')
+        assertNoSensitiveBody(rechazo.body)
+      }
+      assert.equal(harness.requests.length, 0)
+      harness.clearRequests()
+    })
+
+    await suite.test('la ruta de configuración OWNER se renderiza con estado SSR persistido', async () => {
+      const sessionToken = marker()
+      const cookie = 'smart_parking_session=' + sessionToken
+      const indiceSolicitudes = harness.requests.length
+      harness.queueResponse(jsonPlan(200, {
+        autenticado: true,
+        usuario: {
+          nombre: 'Propietario',
+          apellido_paterno: 'Prueba',
+          apellido_materno: null,
+          correo: 'owner@example.invalid',
+          rol: 'OWNER',
+        },
+      }))
+      harness.queueResponse(jsonPlan(200, {
+        modalidad: 'PUBLICO',
+        revision: 2,
+        acceso_suspendido: false,
+      }))
+
+      const respuesta = await fetch(
+        harness.origin + '/admin/configuracion',
+        { headers: { cookie }, signal: AbortSignal.timeout(20_000) },
+      )
+      const html = await respuesta.text()
+      const solicitudes = harness.requests.slice(indiceSolicitudes)
+
+      assert.equal(respuesta.status, 200)
+      assert.match(html, /Configuración del estacionamiento/)
+      assert.match(html, /Modalidad actual:[\s\S]*Público/)
+      assert.match(html, /Acceso habilitado/)
+      assert.match(html, /Fuera de servicio/)
+      assert.match(html, /Guardar cambios/)
+      assert.match(html, /href="\/admin\/configuracion"/)
+      assert.equal(solicitudes.length, 2)
+      assert.equal(solicitudes[0]?.path, '/api/autenticacion/me')
+      assert.equal(solicitudes[1]?.path, '/api/admin/configuracion/modalidad')
+      assert.equal(solicitudes[0]?.cookie, cookie)
+      assert.equal(solicitudes[1]?.cookie, cookie)
+      assert.equal(solicitudes[1]?.method, 'GET')
+      assert.ok(!html.includes(sessionToken), 'Session token is absent from rendered HTML')
+      harness.clearRequests()
+
+      harness.queueResponse(jsonPlan(200, {
+        autenticado: true,
+        usuario: {
+          nombre: 'Propietario',
+          apellido_paterno: 'Prueba',
+          apellido_materno: null,
+          correo: 'owner@example.invalid',
+          rol: 'OWNER',
+        },
+      }))
+      harness.queueResponse(jsonPlan(200, {
+        modalidad: 'MIXTO',
+        revision: 3,
+        acceso_suspendido: true,
+      }))
+
+      const paginaSuspendida = await fetch(
+        harness.origin + '/admin/configuracion',
+        { headers: { cookie }, signal: AbortSignal.timeout(20_000) },
+      )
+      const htmlSuspendido = await paginaSuspendida.text()
+      assert.equal(paginaSuspendida.status, 200)
+      assert.match(htmlSuspendido, /Acceso suspendido/)
+      assert.match(htmlSuspendido, /Reanudar acceso/)
+      assert.match(htmlSuspendido, /class="modality-options" disabled/)
+      assert.match(htmlSuspendido, /Modalidad actual:[\s\S]*Mixto/)
+      assert.ok(!htmlSuspendido.includes(sessionToken))
+      harness.clearRequests()
+    })
+
     await suite.test('Cajón operational PATCH allow-lists ID, body, and session cookie', async () => {
       const sessionCookie = marker()
       const unrelatedCookie = marker()

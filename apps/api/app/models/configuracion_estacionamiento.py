@@ -6,6 +6,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -13,6 +14,7 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -39,6 +41,11 @@ class ConfiguracionEstacionamiento(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     modalidad: Mapped[str] = mapped_column(String(8), nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    acceso_suspendido: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=false(),
+    )
     actualizado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

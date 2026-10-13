@@ -57,13 +57,19 @@ const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Owner' : 'A
 
 const inicialAdmin = computed(() => nombreAdmin.value.charAt(0).toUpperCase())
 
-function esRutaActiva(ruta: 'inicio' | 'estacionamiento' | 'operadores') {
+function esRutaActiva(
+  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'configuracion',
+) {
   if (ruta === 'inicio') {
     return route.path === '/admin'
   }
 
   if (ruta === 'estacionamiento') {
     return route.path === '/admin/estacionamiento'
+  }
+
+  if (ruta === 'configuracion') {
+    return route.path === '/admin/configuracion'
   }
 
   return route.path.startsWith('/admin/operadores')
@@ -241,14 +247,20 @@ onBeforeUnmount(() => {
         </button>
 
         <p class="navigation-label account-label">CUENTA</p>
-        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
+        <NuxtLink
+          v-if="usuario?.rol === 'OWNER'"
+          class="navigation-item"
+          :class="{ 'is-active': esRutaActiva('configuracion') }"
+          to="/admin/configuracion"
+          :aria-current="esRutaActiva('configuracion') ? 'page' : undefined"
+          @click="cerrarMenuMovil"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="3" />
             <path d="m19.4 15 .1.1a1.7 1.7 0 0 1-2.4 2.4l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.2a1.7 1.7 0 0 1-3.4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a1.7 1.7 0 0 1-2.4-2.4l.1-.1a1.7 1.7 0 0 0-1.2-2.9H4a1.7 1.7 0 0 1 0-3.4h.2a1.7 1.7 0 0 0 1.2-2.9l-.1-.1a1.7 1.7 0 0 1 2.4-2.4l.1.1a1.7 1.7 0 0 0 2.9-1.2V4a1.7 1.7 0 0 1 3.4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a1.7 1.7 0 0 1 2.4 2.4l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.2a1.7 1.7 0 0 1 0 3.4h-.2a1.7 1.7 0 0 0-1.2.9Z" />
           </svg>
           <span>Configuración</span>
-          <small>Próximamente</small>
-        </button>
+        </NuxtLink>
       </nav>
 
       <div class="sidebar-footer">
