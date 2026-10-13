@@ -219,6 +219,7 @@ onBeforeUnmount(() => {
           <span>Estacionamiento</span>
         </NuxtLink>
         <NuxtLink
+          v-if="usuario?.rol === 'OWNER'"
           class="navigation-item"
           :class="{ 'is-active': esRutaActiva('operadores') }"
           to="/admin/operadores"
