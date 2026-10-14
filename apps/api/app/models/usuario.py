@@ -23,7 +23,6 @@ from app.core.database import Base
 class RolUsuario(StrEnum):
     """Roles canonicos reconocidos por el dominio de usuarios."""
 
-    ADMIN = "ADMIN"
     OPERADOR = "OPERADOR"
     OWNER = "OWNER"
 
@@ -39,8 +38,14 @@ class Usuario(Base):
             postgresql_where=text("rol = 'OWNER' AND esta_activo IS TRUE"),
         ),
         CheckConstraint(
+            "rol IS NULL OR rol IN ('OPERADOR', 'OWNER')",
+            name="ck_usuarios_rol_valido",
+        ),
+        CheckConstraint(
             "contrasena_hash IS NOT NULL OR "
-            "(rol IS NOT NULL AND rol IN ('ADMIN', 'OPERADOR') "
+            "(rol IS NOT NULL AND rol = 'OPERADOR' "
+            "AND correo_verificado = false) OR "
+            "(rol IS NULL AND esta_activo = false "
             "AND correo_verificado = false)",
             name="ck_usuarios_contrasena_hash_pendiente_activacion",
         ),
@@ -55,8 +60,6 @@ class Usuario(Base):
     rol: Mapped[str | None] = mapped_column(
         String(32).evaluates_none(),
         nullable=True,
-        default=RolUsuario.ADMIN.value,
-        server_default=text(f"'{RolUsuario.ADMIN.value}'"),
     )
     correo_verificado: Mapped[bool] = mapped_column(
         Boolean,

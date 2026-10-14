@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session, sessionmaker
 import app.api.dependencias as dependencias
 import app.api.rutas.eventos as rutas_eventos
 import main
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models import (
     ConfiguracionEstacionamiento,
@@ -30,7 +30,7 @@ from app.servicios.configuracion_estacionamiento import (
     obtener_configuracion_estacionamiento,
 )
 
-NOMBRE_COOKIE_SESION = "smart_parking_session"
+NOMBRE_COOKIE_SESION = get_settings().session_cookie_name
 
 
 def _crear_settings() -> Settings:
@@ -301,7 +301,7 @@ def test_api_rechaza_roles_y_sesiones_que_no_sean_owner_vigente(
     client: TestClient,
     db: Session,
 ) -> None:
-    admin_id = _crear_usuario(db, RolUsuario.ADMIN.value)
+    admin_id = _crear_usuario(db, RolUsuario.OPERADOR.value)
     operador_id = _crear_usuario(db, RolUsuario.OPERADOR.value)
     sin_rol_id = _crear_usuario(db, None)
     owner_inactivo_id = _crear_usuario(db, RolUsuario.OWNER.value, activo=False)
@@ -366,20 +366,26 @@ def test_autorizacion_sigue_el_rol_persistido_y_no_la_identidad_del_owner(
 
     owner = db.get(Usuario, owner_id)
     assert owner is not None
-    owner.rol = RolUsuario.ADMIN.value
+    owner.rol = RolUsuario.OPERADOR.value
     db.commit()
     db.rollback()
 
     _usar_sesion(client, token_anterior)
     assert client.get("/api/admin/configuracion/modalidad").status_code == 403
-    assert client.put(
-        "/api/admin/configuracion/modalidad",
-        json={"modalidad": "PUBLICO", "revision_esperada": 1},
-    ).status_code == 403
-    assert client.put(
-        "/api/admin/configuracion/acceso",
-        json={"acceso_suspendido": True, "revision_esperada": 1},
-    ).status_code == 403
+    assert (
+        client.put(
+            "/api/admin/configuracion/modalidad",
+            json={"modalidad": "PUBLICO", "revision_esperada": 1},
+        ).status_code
+        == 403
+    )
+    assert (
+        client.put(
+            "/api/admin/configuracion/acceso",
+            json={"acceso_suspendido": True, "revision_esperada": 1},
+        ).status_code
+        == 403
+    )
 
     owner_nuevo_id = _crear_usuario(
         db,
@@ -408,7 +414,10 @@ def test_autorizacion_sigue_el_rol_persistido_y_no_la_identidad_del_owner(
     }
 
     _usar_sesion(client, token_anterior)
-    assert client.put(
-        "/api/admin/configuracion/modalidad",
-        json={"modalidad": "MIXTO", "revision_esperada": 2},
-    ).status_code == 403
+    assert (
+        client.put(
+            "/api/admin/configuracion/modalidad",
+            json={"modalidad": "MIXTO", "revision_esperada": 2},
+        ).status_code
+        == 403
+    )

@@ -21,7 +21,7 @@ import app.api.dependencias as dependencias
 import app.api.rutas.eventos as rutas_eventos
 import app.servicios.cajones as servicios_cajones
 import main
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models import (
     Cajon,
@@ -43,7 +43,7 @@ from app.servicios.configuracion_estacionamiento import (
     cambiar_modalidad_estacionamiento,
 )
 
-NOMBRE_COOKIE_SESION = "smart_parking_session"
+NOMBRE_COOKIE_SESION = get_settings().session_cookie_name
 HASH_SINTETICO = "hash-sintetico-cajones-test"
 
 
@@ -154,11 +154,11 @@ def _quitar_cookie(client: TestClient) -> None:
     client.cookies.delete(NOMBRE_COOKIE_SESION)
 
 
-def test_lista_admite_admin_y_operador_y_deniega_sin_sesion(
+def test_lista_admite_owner_y_operador_y_deniega_sin_sesion(
     client: TestClient,
     db: Session,
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     _operador_id, token_operador = _crear_personal(db, RolUsuario.OPERADOR)
 
     anonima = client.get("/api/cajones")
@@ -198,7 +198,7 @@ def test_mutacion_operativa_acepta_personal_y_respeta_no_op_y_cambio_de_motivo(
     client: TestClient,
     db: Session,
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     _operador_id, token_operador = _crear_personal(db, RolUsuario.OPERADOR)
 
     _autorizar_cookie(client, token_admin)
@@ -241,7 +241,7 @@ def test_mutacion_operativa_acepta_mantenimiento_y_fuera_de_servicio_sin_motivo(
     client: TestClient,
     db: Session,
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     _autorizar_cookie(client, token_admin)
 
     mantenimiento = client.patch(
@@ -289,7 +289,7 @@ def test_mutacion_operativa_rechaza_entradas_invalidas(
     db: Session,
     cuerpo: dict[str, object],
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     _autorizar_cookie(client, token_admin)
     respuesta = client.patch("/api/cajones/1/estado-operativo", json=cuerpo)
     assert respuesta.status_code == 422
@@ -303,7 +303,7 @@ def test_mutacion_operativa_devuelve_404_y_solo_acepta_personal(
     db: Session,
     token_dispositivo: str,
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     respuesta_anonima = client.patch(
         "/api/cajones/1/estado-operativo",
         json={"estado": "DISPONIBLE"},
@@ -331,7 +331,7 @@ def test_dispositivo_actualiza_fisico_sin_invadir_sesion_ni_estado_operativo(
     db: Session,
     token_dispositivo: str,
 ) -> None:
-    _admin_id, token_admin = _crear_personal(db, RolUsuario.ADMIN)
+    _admin_id, token_admin = _crear_personal(db, RolUsuario.OWNER)
     _autorizar_cookie(client, token_admin)
     sesion_sola = client.put(
         "/api/cajones/1/estado-fisico",
@@ -412,7 +412,6 @@ def test_dispositivo_actualiza_fisico_sin_invadir_sesion_ni_estado_operativo(
     cajon = lectura.json()["cajones"][0]
     assert cajon["estado_fisico"] == "LIBRE"
     assert cajon["estado_operativo"] == "MANTENIMIENTO"
-
 
     assert cajon["motivo_operativo"] == "Inspeccion"
     assert cajon["estado_efectivo"] == "NO_DISPONIBLE"

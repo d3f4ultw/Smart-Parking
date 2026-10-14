@@ -51,7 +51,7 @@ from app.servicios.usuarios import (
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
 
-router = APIRouter(prefix=RUTA_CREAR_OPERADOR, tags=["admin"])
+router = APIRouter(prefix=RUTA_CREAR_OPERADOR, tags=["owner"])
 
 
 def _error_operador_no_encontrado() -> NoReturn:

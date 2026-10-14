@@ -435,5 +435,5 @@ test('las rutas y la navegación de gestión de operadores requieren OWNER', () 
     assert.match(ruta, /proxyAdminOperadores\(\s*event(?:,|\))/)
   }
   assert.match(bffEventos, /proxyEventos\(event\)/)
-  assert.match(dashboardAdmin, /middleware: 'sesion-admin'/)
+  assert.match(dashboardAdmin, /middleware: 'sesion-owner'/)
 })

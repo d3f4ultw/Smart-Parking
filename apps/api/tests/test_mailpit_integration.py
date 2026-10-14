@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 import json
 import os
 import re
@@ -19,23 +18,17 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import main as modulo_main
 from app.api.rutas import (
-    activaciones_operador,
     activaciones_propietario,
-    autenticacion,
     gestion_propietario,
-    operadores,
 )
-from app.cli import crear_admin
-from app.cli.invitaciones_admin import crear_callback_entrega_admin
 from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models import (
-    ActivacionCuenta,
     CuentaPropietario,
     DesvinculacionPropietario,
     RolUsuario,
@@ -43,8 +36,7 @@ from app.models import (
 )
 from app.seguridad.activaciones import hash_token_activacion
 from app.seguridad.contrasenas import crear_hash_contrasena, verificar_contrasena
-from app.servicios.administradores import reenviar_invitacion_administrador
-from app.servicios.autenticacion import autenticar_admin
+from app.servicios.autenticacion import crear_sesion_usuario
 from app.servicios.gestion_propietario import emitir_sesion_gestion
 from app.servicios.propietario import iniciar_inscripcion_propietario
 
@@ -55,7 +47,7 @@ pytestmark = pytest.mark.skipif(
 
 RUTA_ACTIVACION = "/api/autenticacion/activacion-operador"
 RUTA_OPERADORES = "/api/admin/operadores"
-CONTRASENA_ADMIN = "Activacion SP033 ADMIN 123"
+CONTRASENA_OWNER = "Activacion SP033 OWNER 123"
 CONTRASENA_OPERADOR = "Activacion SP033 OPERADOR 123"
 
 
@@ -64,6 +56,21 @@ def _asegurar(condicion: bool, mensaje: str) -> None:
 
     if not condicion:
         raise AssertionError(mensaje)
+
+
+def _autenticar_usuario(db: Session, correo: str, contrasena: str) -> bool:
+    """Autentica con la sesión compartida por los roles vigentes."""
+
+    return (
+        crear_sesion_usuario(
+            db,
+            correo=correo,
+            contrasena=contrasena,
+            correo_normalizado=correo.casefold(),
+            duracion_minutos=30,
+        )
+        is not None
+    )
 
 
 def _url_api_mailpit() -> str:
@@ -366,215 +373,6 @@ def _activar_cuenta(client: TestClient, token: str, contrasena: str) -> list[str
         "No se pudo completar la activación capturada.",
     )
     return [respuesta.text for respuesta in respuestas]
-
-
-def test_sp033_invitaciones_resend_y_activacion_con_mailpit(
-    db: Session,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    valores = get_settings()
-    settings = valores.model_copy(
-        update={
-            "app_environment": "development",
-            "correo_transporte": "smtp",
-            "app_public_url": os.environ.get(
-                "APP_PUBLIC_URL",
-                "http://localhost:3000",
-            ),
-            "smtp_host": "mailpit",
-            "smtp_port": "1025",
-            "smtp_username": "",
-            "smtp_password": SecretStr(""),
-            "smtp_from_email": "no-reply@example.test",
-            "smtp_from_name": "Smart Parking",
-            "smtp_security": "none",
-        }
-    )
-    if settings.smtp_password is None:
-        raise AssertionError("El perfil Mailpit requiere SMTP_PASSWORD vacía.")
-    _asegurar(
-        settings.smtp_host == "mailpit"
-        and settings.smtp_security == "none"
-        and not settings.smtp_username
-        and not settings.smtp_password.get_secret_value(),
-        "El smoke debe usar solo el SMTP local sin autenticación.",
-    )
-    _solicitar_mailpit("/readyz")
-
-    sufijo = uuid4().hex
-    correo_admin = f"sp033-admin-{sufijo}@example.com"
-    correo_operador = f"sp033-operador-{sufijo}@example.com"
-    correos = [correo_admin, correo_operador]
-    salidas_cli: list[str] = []
-    respuestas_http: list[str] = []
-    tokens: list[str] = []
-
-    def entregar_db() -> Any:
-        yield db
-
-    monkeypatch.setitem(modulo_main.app.dependency_overrides, get_db, entregar_db)
-    monkeypatch.setattr(modulo_main, "get_settings", lambda: settings)
-    monkeypatch.setattr(activaciones_operador, "get_settings", lambda: settings)
-    monkeypatch.setattr(autenticacion, "get_settings", lambda: settings)
-    monkeypatch.setattr(operadores, "get_settings", lambda: settings)
-
-    try:
-        respuestas_cli = iter(["Ada", "Lovelace", "Byron", correo_admin])
-        monkeypatch.setattr(builtins, "input", lambda _prompt: next(respuestas_cli))
-        _asegurar(
-            crear_admin.main(db=db, settings=settings) == 0,
-            "El CLI ADMIN no completó la creación de invitación.",
-        )
-        salida = capsys.readouterr()
-        salidas_cli.extend((salida.out, salida.err))
-        _asegurar(
-            "Correo de activacion enviado." in salida.out
-            and "/activar-cuenta?token=" not in salida.out + salida.err,
-            "El CLI ADMIN no reportó éxito neutral.",
-        )
-
-        ids_admin = _esperar_mensajes(correo_admin, 1)
-        _asegurar(len(ids_admin) == 1, "Mailpit no recibió la invitación ADMIN.")
-        enlace_admin_1, token_admin_1, _texto_admin_1 = _leer_invitacion(
-            ids_admin[0],
-            settings,
-        )
-        tokens.append(token_admin_1)
-
-        usuario_admin = db.scalar(select(Usuario).where(Usuario.correo == correo_admin))
-        if usuario_admin is None:
-            raise AssertionError("No se creó el ADMIN sintético de prueba.")
-        db.commit()
-        reenviar_invitacion_administrador(
-            db,
-            usuario_admin.id,
-            cooldown_segundos=settings.activacion_reenvio_cooldown_segundos,
-            duracion_token_horas=settings.activation_token_ttl_hours,
-            entregar_invitacion=crear_callback_entrega_admin(settings=settings),
-            ahora=datetime.now(UTC) + timedelta(minutes=2),
-        )
-        ids_admin = _esperar_mensajes(correo_admin, 2)
-        _asegurar(len(ids_admin) == 2, "Mailpit no recibió el reenvío ADMIN.")
-        enlace_admin_2, token_admin_2, _texto_admin_2 = _leer_invitacion(
-            ids_admin[0],
-            settings,
-        )
-        tokens.append(token_admin_2)
-        _asegurar(
-            token_admin_1 != token_admin_2,
-            "El reenvío ADMIN no generó un token distinto.",
-        )
-
-        with TestClient(modulo_main.app) as client:
-            respuestas_http.extend(
-                _activar_cuenta(client, token_admin_2, CONTRASENA_ADMIN)
-            )
-            login = client.post(
-                "/api/autenticacion/login",
-                json={"correo": correo_admin, "contrasena": CONTRASENA_ADMIN},
-            )
-            respuestas_http.append(login.text)
-            _asegurar(
-                login.status_code == 200 and login.json().get("rol") == "ADMIN",
-                "El ADMIN activado no pudo autenticarse.",
-            )
-
-            crear_respuesta = client.post(
-                RUTA_OPERADORES,
-                json={
-                    "nombre": "SP033",
-                    "apellido_paterno": "Operador",
-                    "apellido_materno": "Prueba",
-                    "correo": correo_operador,
-                },
-            )
-            respuestas_http.append(crear_respuesta.text)
-            _asegurar(
-                crear_respuesta.status_code == 201
-                and crear_respuesta.json().get("estado") == "operador_creado",
-                "El panel ADMIN no pudo crear la invitación OPERADOR.",
-            )
-
-            ids_operador = _esperar_mensajes(correo_operador, 1)
-            _asegurar(
-                len(ids_operador) == 1,
-                "Mailpit no recibió la invitación OPERADOR.",
-            )
-            enlace_operador_1, token_operador_1, _texto_operador_1 = _leer_invitacion(
-                ids_operador[0],
-                settings,
-            )
-            tokens.append(token_operador_1)
-
-            usuario_operador = db.scalar(
-                select(Usuario).where(Usuario.correo == correo_operador)
-            )
-            if usuario_operador is None:
-                raise AssertionError("No se creó el OPERADOR sintético de prueba.")
-            fecha_sin_cooldown = datetime.now(UTC) - timedelta(
-                seconds=settings.activacion_reenvio_cooldown_segundos + 5
-            )
-            db.execute(
-                update(ActivacionCuenta)
-                .where(ActivacionCuenta.usuario_id == usuario_operador.id)
-                .values(
-                    creado_en=fecha_sin_cooldown,
-                    ultimo_reenvio_en=fecha_sin_cooldown,
-                )
-            )
-            db.commit()
-
-            reenvio_respuesta = client.post(
-                f"{RUTA_OPERADORES}/{usuario_operador.id}/reenviar-invitacion"
-            )
-            respuestas_http.append(reenvio_respuesta.text)
-            _asegurar(
-                reenvio_respuesta.status_code == 200,
-                "El API no pudo reenviar la invitación OPERADOR "
-                f"(HTTP {reenvio_respuesta.status_code}).",
-            )
-            _asegurar(
-                reenvio_respuesta.json().get("estado") == "invitacion_enviada",
-                "El API devolvió un estado inesperado al reenviar OPERADOR.",
-            )
-            ids_operador = _esperar_mensajes(correo_operador, 2)
-            _asegurar(
-                len(ids_operador) == 2,
-                "Mailpit no recibió el reenvío OPERADOR.",
-            )
-            enlace_operador_2, token_operador_2, _texto_operador_2 = _leer_invitacion(
-                ids_operador[0],
-                settings,
-            )
-            tokens.append(token_operador_2)
-            _asegurar(
-                token_operador_1 != token_operador_2,
-                "El reenvío OPERADOR no generó un token distinto.",
-            )
-            respuestas_http.extend(
-                _activar_cuenta(client, token_operador_2, CONTRASENA_OPERADOR)
-            )
-
-        salida_total = "\n".join(salidas_cli + respuestas_http + [caplog.text])
-        for token in tokens:
-            _asegurar(
-                token not in salida_total,
-                "Un token capturado apareció en salida o logs.",
-            )
-        for enlace in (
-            enlace_admin_1,
-            enlace_admin_2,
-            enlace_operador_1,
-            enlace_operador_2,
-        ):
-            _asegurar(
-                enlace not in salida_total,
-                "Un enlace capturado apareció en salida o logs.",
-            )
-    finally:
-        _limpiar_mensajes(correos)
 
 
 def test_sp_owner_gestion_web_envia_y_activa_enlace_sintetico_con_mailpit(
@@ -919,7 +717,8 @@ def test_sp_owner_retorno_roleless_envia_y_confirma_correo_con_mailpit(
                     estado.json().get("nombre"),
                     estado.json().get("apellido_paterno"),
                     estado.json().get("apellido_materno"),
-                ) == nombre_previo,
+                )
+                == nombre_previo,
                 "El desafio no reconoció el OWNER roleless ni su nombre.",
             )
             completar = client.post(
@@ -968,7 +767,7 @@ def test_sp_owner_retorno_roleless_envia_y_confirma_correo_con_mailpit(
             and cuenta.rol_anterior is None
             and cuenta.contrasena_admin_hash is not None
             and cuenta.contrasena_admin_hash != hash_admin_anterior
-            and autenticar_admin(db, correo=correo, contrasena=login_original),
+            and _autenticar_usuario(db, correo, login_original),
             "La cuenta de retorno no preservó su identidad y credenciales esperadas.",
         )
         hash_admin_final = cuenta.contrasena_admin_hash
@@ -1060,9 +859,11 @@ def test_sp_owner_desvinculacion_envia_confirmacion_de_un_solo_uso_con_mailpit(
         emision = emitir_sesion_gestion(db)
         if emision.ticket is None or emision.codigo_apareamiento is None:
             raise AssertionError("No se pudo preparar la sesión de gestión sintética.")
-        origen = urlsplit(settings.app_public_url).scheme + "://" + urlsplit(
-            settings.app_public_url
-        ).netloc
+        origen = (
+            urlsplit(settings.app_public_url).scheme
+            + "://"
+            + urlsplit(settings.app_public_url).netloc
+        )
 
         with TestClient(modulo_main.app) as client:
             reclamo = client.post(
@@ -1105,8 +906,7 @@ def test_sp_owner_desvinculacion_envia_confirmacion_de_un_solo_uso_con_mailpit(
             )
             enlace = urlsplit(enlaces_confirmacion[0])
             _asegurar(
-                enlace.query == ""
-                and enlace.fragment.startswith("desvincular="),
+                enlace.query == "" and enlace.fragment.startswith("desvincular="),
                 "El enlace expuso el token fuera del fragmento.",
             )
             token = enlace.fragment.removeprefix("desvincular=")
@@ -1132,9 +932,7 @@ def test_sp_owner_desvinculacion_envia_confirmacion_de_un_solo_uso_con_mailpit(
         db.expire_all()
         usuario_final = db.get(Usuario, usuario.id)
         cuenta_final = db.scalar(
-            select(CuentaPropietario).where(
-                CuentaPropietario.usuario_id == usuario.id
-            )
+            select(CuentaPropietario).where(CuentaPropietario.usuario_id == usuario.id)
         )
         _asegurar(
             usuario_final is not None
@@ -1144,8 +942,7 @@ def test_sp_owner_desvinculacion_envia_confirmacion_de_un_solo_uso_con_mailpit(
             "La cuenta sintética no conservó su identidad sin rol.",
         )
         _asegurar(
-            cuenta_final is not None
-            and cuenta_final.contrasena_admin_hash is None,
+            cuenta_final is not None and cuenta_final.contrasena_admin_hash is None,
             "La credencial administrativa no se invalidó.",
         )
         salida = "\n".join(respuestas)

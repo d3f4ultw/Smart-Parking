@@ -27,8 +27,8 @@ RUTA_CONFIGURACION_MODALIDAD = "/api/admin/configuracion/modalidad"
 RUTA_CONFIGURACION_ACCESO = "/api/admin/configuracion/acceso"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
 
-router = APIRouter(prefix=RUTA_CONFIGURACION_MODALIDAD, tags=["admin"])
-router_acceso = APIRouter(prefix=RUTA_CONFIGURACION_ACCESO, tags=["admin"])
+router = APIRouter(prefix=RUTA_CONFIGURACION_MODALIDAD, tags=["owner"])
+router_acceso = APIRouter(prefix=RUTA_CONFIGURACION_ACCESO, tags=["owner"])
 
 
 def _error_interno() -> NoReturn:
@@ -94,8 +94,7 @@ def cambiar_modalidad_endpoint(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "No se puede cambiar la modalidad mientras el acceso está "
-                "suspendido."
+                "No se puede cambiar la modalidad mientras el acceso está suspendido."
             ),
             headers=CABECERA_NO_CACHE,
         ) from None

@@ -81,7 +81,6 @@ test('informa cuando una cuenta no tiene acceso asignado', () => {
 })
 
 test('elige el área según el rol confirmado por el servidor', () => {
-  assert.equal(obtenerRutaDespuesLogin('ADMIN'), '/admin')
   assert.equal(obtenerRutaDespuesLogin('OPERADOR'), '/operador')
   assert.equal(obtenerRutaDespuesLogin('OWNER'), '/admin')
 })

@@ -1,4 +1,4 @@
-export type RolUsuario = 'ADMIN' | 'OPERADOR' | 'OWNER'
+export type RolUsuario = 'OPERADOR' | 'OWNER'
 
 export interface UsuarioSesion {
   nombre: string | null

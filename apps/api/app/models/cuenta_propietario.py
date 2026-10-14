@@ -22,7 +22,7 @@ class CuentaPropietario(Base):
     __table_args__ = (
         Index("uq_cuentas_propietario_usuario_id", "usuario_id", unique=True),
         CheckConstraint(
-            "rol_anterior IS NULL OR rol_anterior IN ('ADMIN', 'OPERADOR')",
+            "rol_anterior IS NULL OR rol_anterior = 'OPERADOR'",
             name="ck_cuentas_propietario_rol_anterior",
         ),
     )
@@ -52,4 +52,3 @@ class CuentaPropietario(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-

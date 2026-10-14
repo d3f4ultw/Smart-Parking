@@ -25,14 +25,11 @@ TipoEventoTiempoReal = Literal[
     "operador.actualizado",
     "cajon.actualizado",
 ]
-RolTiempoReal = Literal["ADMIN", "OPERADOR", "OWNER"]
 
 TIPOS_EVENTO_OPERADOR = frozenset({"operador.creado", "operador.actualizado"})
 TIPOS_EVENTO_CAJON = frozenset({"cajon.actualizado"})
-TIPOS_EVENTO_ADMIN = TIPOS_EVENTO_CAJON
 TIPOS_EVENTO_TIEMPO_REAL = TIPOS_EVENTO_OPERADOR | TIPOS_EVENTO_CAJON
 EVENTOS_POR_ROL: dict[str, frozenset[str]] = {
-    "ADMIN": TIPOS_EVENTO_ADMIN,
     "OPERADOR": TIPOS_EVENTO_CAJON,
     "OWNER": TIPOS_EVENTO_TIEMPO_REAL,
 }
@@ -46,16 +43,9 @@ VENTANA_APERTURAS = timedelta(seconds=60)
 DURACION_CONCESION = timedelta(seconds=45)
 EDAD_LIMPIEZA_CONCESION = timedelta(minutes=5)
 
-# Compatibilidad temporal para imports que aun nombran el productor OPERADOR.
-MAXIMO_CONEXIONES_ADMIN = MAXIMO_CONEXIONES_SSE
-MAXIMAS_APERTURAS_ADMIN = MAXIMAS_APERTURAS_SSE
-
 
 class SesionTiempoRealNoValidaError(ValueError):
     """Indica que la sesion persistida no autoriza un stream."""
-
-
-SesionAdminSSENoValidaError = SesionTiempoRealNoValidaError
 
 
 class LimiteConexionesSSEError(ValueError):
@@ -469,64 +459,6 @@ def consultar_lote_eventos_usuario(
         )
 
 
-# Compatibilidad de nombres internos mientras los productores actuales siguen
-# expresando el dominio OPERADOR. Todos delegan al unico servicio generico.
-def admitir_conexion_sse_admin(
-    db: Session,
-    *,
-    admin_usuario_id: int,
-    token_sesion: str,
-    ahora: datetime | None = None,
-) -> UUID:
-    return admitir_conexion_sse(
-        db,
-        usuario_id=admin_usuario_id,
-        token_sesion=token_sesion,
-        ahora=ahora,
-    )
-
-
-def cerrar_conexion_sse_admin(
-    db: Session,
-    *,
-    admin_usuario_id: int,
-    lease_id: UUID,
-    ahora: datetime | None = None,
-) -> None:
-    cerrar_conexion_sse(
-        db,
-        usuario_id=admin_usuario_id,
-        lease_id=lease_id,
-        ahora=ahora,
-    )
-
-
-def consultar_lote_eventos_sse(
-    db: Session,
-    *,
-    admin_usuario_id: int,
-    token_sesion: str,
-    lease_id: UUID,
-    cursor: int,
-    revalidar_sesion: bool,
-    renovar_conexion: bool,
-    ahora: datetime | None = None,
-) -> ResultadoLoteEventosSSE:
-    """Delegado transitorio para las pruebas previas centradas en ADMIN."""
-
-    return consultar_lote_eventos_usuario(
-        db,
-        usuario_id=admin_usuario_id,
-        rol_usuario="ADMIN",
-        token_sesion=token_sesion,
-        lease_id=lease_id,
-        cursor=cursor,
-        revalidar_sesion=revalidar_sesion,
-        renovar_conexion=renovar_conexion,
-        ahora=ahora,
-    )
-
-
 __all__ = [
     "DIAS_RETENCION_EVENTOS",
     "DURACION_CONCESION",
@@ -534,26 +466,20 @@ __all__ = [
     "EVENTOS_POR_ROL",
     "EventoSSE",
     "LimiteConexionesSSEError",
-    "MAXIMAS_APERTURAS_ADMIN",
     "MAXIMAS_APERTURAS_SSE",
-    "MAXIMO_CONEXIONES_ADMIN",
     "MAXIMO_CONEXIONES_SSE",
     "MAXIMO_EVENTOS_POR_LECTURA",
     "MAXIMO_EVENTOS_RETENIDOS",
     "ResultadoLoteEventosSSE",
     "ROLES_STREAM",
     "SesionTiempoRealNoValidaError",
-    "SesionAdminSSENoValidaError",
     "TIPOS_EVENTO_TIEMPO_REAL",
     "TIPOS_EVENTO_CAJON",
     "TIPOS_EVENTO_OPERADOR",
     "TipoEventoTiempoReal",
     "TipoEventoOperador",
     "admitir_conexion_sse",
-    "admitir_conexion_sse_admin",
     "cerrar_conexion_sse",
-    "cerrar_conexion_sse_admin",
-    "consultar_lote_eventos_sse",
     "consultar_lote_eventos_usuario",
     "cursor_necesita_resync",
     "obtener_marca_eventos",

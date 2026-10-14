@@ -1,4 +1,4 @@
-"""Ruta HTTP para validar credenciales de ADMIN."""
+"""Rutas HTTP para autenticacion de cuentas."""
 
 from typing import Annotated, NoReturn
 

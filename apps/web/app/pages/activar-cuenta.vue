@@ -141,12 +141,12 @@ async function completarActivacion() {
 
       <div v-else-if="estado === 'requerido'" class="state-block" role="status">
         <h2>Enlace de activación requerido</h2>
-        <p>Usa el enlace de invitación que recibiste por correo o solicita al administrador que reenvíe la invitación.</p>
+        <p>Usa el enlace de invitación que recibiste por correo o solicita al propietario que reenvíe la invitación.</p>
       </div>
 
       <div v-else-if="estado === 'invalido'" class="state-block error" role="alert">
         <h2>Este enlace de activación no es válido o ha expirado.</h2>
-        <p>Solicita al administrador que reenvíe la invitación.</p>
+        <p>Solicita al propietario que reenvíe la invitación.</p>
       </div>
 
       <div v-else-if="estado === 'error'" class="state-block error" role="alert">

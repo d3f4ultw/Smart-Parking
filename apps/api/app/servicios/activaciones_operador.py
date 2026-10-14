@@ -1,4 +1,4 @@
-"""Flujo compartido de enlace y desafio para activar cuentas."""
+"""Flujo de enlace y desafio para activar cuentas OPERADOR."""
 
 from __future__ import annotations
 
@@ -42,10 +42,6 @@ def _ahora_utc(ahora: datetime | None) -> datetime:
 def _cuenta_pendiente_activa(usuario: Usuario) -> bool:
     if not usuario.esta_activo or usuario.correo_verificado:
         return False
-    if usuario.rol == RolUsuario.ADMIN.value:
-        # ADMIN legacy puede tener un hash previo; el enlace aceptado establece
-        # una contraseña nueva antes de habilitar el acceso.
-        return True
     return usuario.rol == RolUsuario.OPERADOR.value and usuario.contrasena_hash is None
 
 

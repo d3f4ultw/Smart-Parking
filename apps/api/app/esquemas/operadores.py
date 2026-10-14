@@ -1,4 +1,4 @@
-"""Esquemas HTTP para crear cuentas OPERADOR desde el panel ADMIN."""
+"""Esquemas HTTP para administrar cuentas OPERADOR desde el panel OWNER."""
 
 from datetime import datetime
 from typing import Annotated, Literal
@@ -24,7 +24,7 @@ class RespuestaCrearOperador(BaseModel):
 
 
 class RespuestaCreadorOperador(BaseModel):
-    """Identidad ADMIN segura atribuida a la creacion del OPERADOR."""
+    """Identidad OWNER segura atribuida a la creacion del OPERADOR."""
 
     model_config = ConfigDict(extra="forbid", from_attributes=True)
 
@@ -56,7 +56,7 @@ class RespuestaOperador(BaseModel):
 
 
 class RespuestaListaOperadores(BaseModel):
-    """Lista segura de OPERADOR para ADMIN."""
+    """Lista segura de OPERADOR para OWNER."""
 
     model_config = ConfigDict(extra="forbid")
 

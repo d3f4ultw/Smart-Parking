@@ -16,7 +16,7 @@ export function useSesion() {
         })
       } catch {
         // Una respuesta no autenticada o un fallo del backend nunca debe
-        // permitir que el cliente se trate como ADMIN.
+        // permitir que el cliente se trate como OWNER.
         return null
       }
     },

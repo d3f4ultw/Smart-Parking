@@ -312,7 +312,7 @@ def _preparar_contexto_stream_tiempo_real(
     if (
         usuario_id is None
         or rol_usuario is None
-        or rol_usuario not in {"ADMIN", "OWNER", "OPERADOR"}
+        or rol_usuario not in {"OWNER", "OPERADOR"}
     ):
         _error_sesion_no_autenticada()
 
@@ -488,7 +488,7 @@ async def eventos_tiempo_real_endpoint(
         Depends(_preparar_contexto_stream_tiempo_real, scope="function"),
     ],
 ) -> AsyncIterator[ServerSentEvent]:
-    """Inicia el stream comun para sesiones ADMIN y OPERADOR."""
+    """Inicia el stream comun para sesiones OWNER y OPERADOR."""
 
     if contexto.iterador_eventos is None:
         return

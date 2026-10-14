@@ -17,14 +17,6 @@ from app.seguridad.sesiones import generar_token_sesion, hash_token_sesion
 
 
 @dataclass(frozen=True, slots=True)
-class ResultadoSesionAdmin:
-    """Sesión persistida y token efímero que solo se entrega mediante cookie."""
-
-    sesion: Sesion
-    token: str = field(repr=False)
-
-
-@dataclass(frozen=True, slots=True)
 class ResultadoSesionUsuario:
     """Sesión de cualquier rol admitido y token efímero para la cookie."""
 
@@ -35,18 +27,6 @@ class ResultadoSesionUsuario:
 
 class CuentaSinAccesoAsignadoError(ValueError):
     """Indica que la cuenta autentica no tiene un rol operativo asignado."""
-
-
-def _cuenta_admin_utilizable(usuario: Usuario) -> bool:
-    """Indica si el estado persistido permite validar un login de ADMIN."""
-
-    return (
-        usuario.rol in {RolUsuario.ADMIN.value, RolUsuario.OWNER.value}
-        and usuario.esta_activo
-        and usuario.correo_verificado
-        and not usuario.debe_cambiar_contrasena
-        and usuario.contrasena_hash is not None
-    )
 
 
 def _cuenta_usuario_utilizable(
@@ -74,7 +54,6 @@ def _autenticar_usuario(
     correo: str,
     contrasena: str,
     correo_normalizado: str | None = None,
-    rol_requerido: RolUsuario | None = None,
     bloquear_fila: bool = False,
     permitir_sin_rol: bool = False,
 ) -> Usuario | None:
@@ -96,15 +75,6 @@ def _autenticar_usuario(
             usuario,
             permitir_sin_rol=permitir_sin_rol,
         )
-        or (
-            rol_requerido is not None
-            and usuario.rol
-            not in (
-                {RolUsuario.ADMIN.value, RolUsuario.OWNER.value}
-                if rol_requerido == RolUsuario.ADMIN
-                else {rol_requerido.value}
-            )
-        )
     ):
         # Mantenemos un costo similar cuando la cuenta no puede autenticarse.
         verificar_contrasena(contrasena, HASH_DUMMY_CONTRASENA)
@@ -113,76 +83,6 @@ def _autenticar_usuario(
     if not verificar_contrasena(contrasena, contrasena_hash):
         return None
     return usuario
-
-
-def autenticar_admin(
-    db: Session,
-    *,
-    correo: str,
-    contrasena: str,
-    correo_normalizado: str | None = None,
-) -> bool:
-    """Valida credenciales y estado sin modificar al usuario ni crear sesiones."""
-
-    return (
-        _autenticar_usuario(
-            db,
-            correo=correo,
-            contrasena=contrasena,
-            correo_normalizado=correo_normalizado,
-            rol_requerido=RolUsuario.ADMIN,
-        )
-        is not None
-    )
-
-
-def crear_sesion_admin(
-    db: Session,
-    *,
-    correo: str,
-    contrasena: str,
-    correo_normalizado: str,
-    duracion_minutos: int,
-    ahora: datetime | None = None,
-) -> ResultadoSesionAdmin | None:
-    """Autentica un ADMIN y persiste una sesión antes de exponer su cookie.
-
-    La única copia del token original queda en memoria hasta que la ruta lo
-    coloca en una cookie HttpOnly; PostgreSQL recibe solamente su hash.
-    """
-
-    if not autenticar_admin(
-        db,
-        correo=correo,
-        contrasena=contrasena,
-        correo_normalizado=correo_normalizado,
-    ):
-        return None
-
-    ahora_utc = ahora or datetime.now(UTC)
-    expira_en = ahora_utc + timedelta(minutes=duracion_minutos)
-    token = generar_token_sesion()
-
-    try:
-        usuario = db.scalar(select(Usuario).where(Usuario.correo == correo_normalizado))
-        if usuario is None:
-            return None
-
-        sesion = Sesion(
-            usuario_id=usuario.id,
-            token_hash=hash_token_sesion(token),
-            expira_en=expira_en,
-            revocado_en=None,
-            creado_en=ahora_utc,
-        )
-        db.add(sesion)
-        db.commit()
-        db.refresh(sesion)
-    except SQLAlchemyError:
-        db.rollback()
-        raise
-
-    return ResultadoSesionAdmin(sesion=sesion, token=token)
 
 
 def crear_sesion_usuario(
@@ -260,32 +160,6 @@ def obtener_usuario_por_token(
     return usuario
 
 
-def obtener_usuario_admin_por_token(
-    db: Session,
-    *,
-    token: str,
-    ahora: datetime | None = None,
-) -> Usuario | None:
-    """Obtiene el ADMIN si el token representa una sesión todavía válida."""
-
-    ahora_utc = ahora or datetime.now(UTC)
-    sesion = db.scalar(
-        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token))
-    )
-    if (
-        sesion is None
-        or sesion.revocado_en is not None
-        or sesion.expira_en <= ahora_utc
-    ):
-        return None
-
-    usuario = db.get(Usuario, sesion.usuario_id)
-    if usuario is None or not _cuenta_admin_utilizable(usuario):
-        return None
-
-    return usuario
-
-
 def revocar_sesion_actual(
     db: Session,
     *,
@@ -324,7 +198,7 @@ def revocar_sesiones_vigentes(
     usuario_id: int,
     ahora: datetime | None = None,
 ) -> int:
-    """Revoca las sesiones vigentes de un ADMIN dentro de la transaccion actual.
+    """Revoca las sesiones vigentes de un usuario dentro de la transaccion actual.
 
     La funcion no hace ``commit`` ni ``rollback``: quien la invoca conserva la
     atomicidad de la operacion que cambia el estado de la cuenta.
@@ -364,13 +238,9 @@ def revocar_sesiones_usuario(
 
 
 __all__ = [
-    "ResultadoSesionAdmin",
     "ResultadoSesionUsuario",
     "CuentaSinAccesoAsignadoError",
-    "autenticar_admin",
-    "crear_sesion_admin",
     "crear_sesion_usuario",
-    "obtener_usuario_admin_por_token",
     "obtener_usuario_por_token",
     "revocar_sesion_actual",
     "revocar_sesiones_vigentes",

@@ -98,7 +98,6 @@ class ConexionSSEUsuario(Base):
         ForeignKey("usuarios.id", ondelete="CASCADE"),
         nullable=False,
     )
-    admin_usuario_id = synonym("usuario_id")
     abierta_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -106,10 +105,3 @@ class ConexionSSEUsuario(Base):
     )
     expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     cerrada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-# Aliases internos durante la migracion de los tests que cubren los productores
-# de eventos de OPERADOR. El mapeo y las tablas ya son los genericos nuevos.
-EstadoEventosOperadores = EstadoEventosTiempoReal
-EventoOperador = EventoTiempoReal
-ConexionSSEAdmin = ConexionSSEUsuario

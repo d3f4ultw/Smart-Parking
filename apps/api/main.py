@@ -17,7 +17,6 @@ from app.api.rutas import (
     RUTA_ME,
     activaciones_operador_router,
     activaciones_propietario_router,
-    activaciones_router,
     autenticacion_router,
     cajones_router,
     configuracion_acceso_router,
@@ -25,7 +24,6 @@ from app.api.rutas import (
     eventos_tiempo_real_router,
     gestion_propietario_router,
     operadores_router,
-    reenvio_activacion_router,
 )
 from app.api.rutas.eventos import cerrar_leases_sse_activas
 from app.core.config import get_settings
@@ -65,16 +63,6 @@ app.include_router(operadores_router)
 app.include_router(activaciones_operador_router)
 app.include_router(activaciones_propietario_router)
 app.include_router(gestion_propietario_router)
-app.include_router(activaciones_router)
-app.include_router(reenvio_activacion_router)
-RUTAS_ACTIVACION = frozenset(
-    {
-        "/api/autenticacion/activar/manual",
-        "/api/autenticacion/activar/temporal",
-        "/api/autenticacion/activacion/prevalidar",
-        "/api/autenticacion/activacion/reenviar",
-    }
-)
 RUTAS_ACTIVACION_OPERADOR = frozenset(
     {
         f"{RUTA_ACTIVACION_OPERADOR}/enlace",
@@ -90,8 +78,7 @@ RUTAS_ACTIVACION_PROPIETARIO = frozenset(
     }
 )
 RUTAS_SIN_CACHE = (
-    RUTAS_ACTIVACION
-    | RUTAS_ACTIVACION_OPERADOR
+    RUTAS_ACTIVACION_OPERADOR
     | RUTAS_ACTIVACION_PROPIETARIO
     | {
         RUTA_CREAR_OPERADOR,
@@ -112,9 +99,8 @@ async def evitar_cache_en_autenticacion(
     """Evita cachear respuestas privadas de autenticación y configuración."""
 
     response = await call_next(request)
-    if (
-        request.url.path in RUTAS_SIN_CACHE
-        or request.url.path.startswith("/api/gestion-propietario/v1/")
+    if request.url.path in RUTAS_SIN_CACHE or request.url.path.startswith(
+        "/api/gestion-propietario/v1/"
     ):
         response.headers["Cache-Control"] = "no-store"
     if request.url.path.startswith("/api/gestion-propietario/v1/"):

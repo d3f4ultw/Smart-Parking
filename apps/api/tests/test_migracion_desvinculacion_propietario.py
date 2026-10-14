@@ -20,7 +20,7 @@ from app.models import (
 from app.seguridad.contrasenas import crear_hash_contrasena
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REVISION_HEAD = "20261011_0007"
+REVISION_HEAD = "20261013_0001"
 REVISION_PREVIA = "20261011_0004"
 
 
@@ -84,9 +84,10 @@ def test_migracion_anade_tabla_indices_y_columnas_nullable(db: Session) -> None:
     } <= set(columnas_desvinculacion)
     assert indices["uq_desvinculaciones_propietario_token_hash"]["unique"] is True
     assert indices["uq_desvinculaciones_propietario_pendiente"]["unique"] is True
-    opciones = indices[
-        "uq_desvinculaciones_propietario_pendiente"
-    ].get("dialect_options") or {}
+    opciones = (
+        indices["uq_desvinculaciones_propietario_pendiente"].get("dialect_options")
+        or {}
+    )
     predicado = str(opciones.get("postgresql_where", ""))
     assert (
         "consumida_en is null and invalidada_en is null"

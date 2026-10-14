@@ -142,7 +142,7 @@ const etiquetaEstadoStream = computed(() => {
     conectado: 'Actualizaciones en tiempo real conectadas',
     reconectando: 'Reconectando actualizaciones en tiempo real…',
     'verificando-sesion': 'Verificando la sesión para reconectar…',
-    'sesion-perdida': 'La sesión ADMIN terminó.',
+    'sesion-perdida': 'La sesión OWNER terminó.',
     detenido: 'Actualizaciones en tiempo real detenidas',
   }
   return etiquetas[estadoStream.value]

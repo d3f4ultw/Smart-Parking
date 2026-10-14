@@ -59,7 +59,7 @@ def exigir_personal(
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> int:
-    """Valida la sesion persistida de ADMIN, OWNER u OPERADOR."""
+    """Valida la sesion persistida de OWNER u OPERADOR."""
 
     response.headers.update(CABECERA_NO_CACHE)
     token = request.cookies.get(get_settings().session_cookie_name)
@@ -74,7 +74,6 @@ def exigir_personal(
         _error_sesion_no_autenticada()
 
     if usuario is None or usuario.rol not in {
-        RolUsuario.ADMIN.value,
         RolUsuario.OWNER.value,
         RolUsuario.OPERADOR.value,
     }:
@@ -83,48 +82,6 @@ def exigir_personal(
 
     usuario_id = usuario.id
     db.rollback()
-    return usuario_id
-
-
-def exigir_admin(
-    request: Request,
-    response: Response,
-    db: Annotated[Session, Depends(get_db)],
-) -> int:
-    """Valida la sesion persistida y devuelve el id del ADMIN confiable."""
-
-    response.headers.update(CABECERA_NO_CACHE)
-    token = request.cookies.get(get_settings().session_cookie_name)
-    if not token:
-        db.rollback()
-        _error_sesion_no_autenticada()
-
-    try:
-        usuario = obtener_usuario_por_token(db, token=token)
-    except SQLAlchemyError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno",
-            headers=CABECERA_NO_CACHE,
-        ) from None
-
-    if usuario is None:
-        db.rollback()
-        _error_sesion_no_autenticada()
-
-    usuario_id = usuario.id
-    es_admin = usuario.rol in {
-        RolUsuario.ADMIN.value,
-        RolUsuario.OWNER.value,
-    }
-    db.rollback()
-    if not es_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acceso denegado",
-            headers=CABECERA_NO_CACHE,
-        )
     return usuario_id
 
 
@@ -204,7 +161,6 @@ def exigir_dispositivo(
 
 
 __all__ = [
-    "exigir_admin",
     "exigir_dispositivo",
     "exigir_operador",
     "exigir_owner",
