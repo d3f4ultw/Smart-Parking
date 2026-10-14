@@ -16,12 +16,12 @@ from app.core.config import Settings
 from app.models import (
     ActivacionCuenta,
     Cajon,
-    ConexionSSEAdmin,
+    ConexionSSEUsuario,
     ConfiguracionEstacionamiento,
     CuentaPropietario,
     DesvinculacionPropietario,
-    EstadoEventosOperadores,
-    EventoOperador,
+    EstadoEventosTiempoReal,
+    EventoTiempoReal,
     HistorialModalidadEstacionamiento,
     InscripcionPropietario,
     Sesion,
@@ -146,8 +146,8 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(ActivacionCuenta))
         session.execute(delete(InscripcionPropietario))
         session.execute(delete(CuentaPropietario))
-        session.execute(delete(ConexionSSEAdmin))
-        session.execute(delete(EventoOperador))
+        session.execute(delete(ConexionSSEUsuario))
+        session.execute(delete(EventoTiempoReal))
         session.execute(delete(HistorialModalidadEstacionamiento))
         session.execute(delete(ConfiguracionEstacionamiento))
         session.execute(delete(Usuario))
@@ -162,8 +162,8 @@ def db(database_url: URL) -> Generator[Session]:
             )
         )
         session.execute(
-            update(EstadoEventosOperadores)
-            .where(EstadoEventosOperadores.id == 1)
+            update(EstadoEventosTiempoReal)
+            .where(EstadoEventosTiempoReal.id == 1)
             .values(ultimo_id=0)
         )
         session.commit()

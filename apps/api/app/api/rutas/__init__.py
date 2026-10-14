@@ -1,11 +1,5 @@
 """Rutas HTTP de Smart Parking."""
 
-from app.api.rutas.activaciones import (
-    reenviar_router as reenvio_activacion_router,
-)
-from app.api.rutas.activaciones import (
-    router as activaciones_router,
-)
 from app.api.rutas.activaciones_operador import (
     RUTA_ACTIVACION_OPERADOR,
 )
@@ -61,7 +55,6 @@ __all__ = [
     "RUTA_CONFIGURACION_MODALIDAD",
     "RUTA_CONFIGURACION_ACCESO",
     "RUTA_GESTION_PROPIETARIO",
-    "activaciones_router",
     "activaciones_operador_router",
     "activaciones_propietario_router",
     "autenticacion_router",
@@ -71,5 +64,4 @@ __all__ = [
     "eventos_tiempo_real_router",
     "gestion_propietario_router",
     "operadores_router",
-    "reenvio_activacion_router",
 ]

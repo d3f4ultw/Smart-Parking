@@ -10,7 +10,7 @@ export default defineNuxtRouteMiddleware(async () => {
     return navigateTo('/login', { replace: true })
   }
 
-  if (usuario.value.rol !== 'ADMIN' && usuario.value.rol !== 'OWNER') {
+  if (usuario.value.rol !== 'OWNER') {
     return navigateTo('/operador', { replace: true })
   }
 })

@@ -1,4 +1,4 @@
-"""Pruebas focalizadas de auditoria y autorizacion del stream ADMIN."""
+"""Pruebas focalizadas de auditoria y autorizacion del stream OWNER."""
 
 from __future__ import annotations
 
@@ -19,12 +19,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.rutas import eventos as rutas_eventos
 from app.api.rutas import operadores as rutas_operadores
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.models import (
-    ConexionSSEAdmin,
-    EstadoEventosOperadores,
-    EventoOperador,
+    ConexionSSEUsuario,
+    EstadoEventosTiempoReal,
+    EventoTiempoReal,
     RolUsuario,
     Sesion,
     Usuario,
@@ -33,16 +33,16 @@ from app.seguridad.sesiones import hash_token_sesion
 from app.servicios.eventos_operadores import (
     EventoSSE,
     ResultadoLoteEventosSSE,
-    admitir_conexion_sse_admin,
+    admitir_conexion_sse,
     registrar_evento_operador,
 )
 from app.servicios.operadores import listar_operadores
-from app.servicios.usuarios import crear_admin, crear_operador
+from app.servicios.usuarios import crear_operador
 from main import app
 
 RUTA_OPERADORES = "/api/admin/operadores"
 RUTA_EVENTOS = f"{RUTA_OPERADORES}/eventos"
-NOMBRE_COOKIE = "smart_parking_session"
+NOMBRE_COOKIE = get_settings().session_cookie_name
 HASH_SINTETICO = "hash-sintetico-de-prueba"
 
 
@@ -99,34 +99,6 @@ def client(
         motor.dispose()
 
 
-def _crear_admin(db: Session) -> tuple[int, str]:
-    usuario = Usuario(
-        nombre="Ada",
-        apellido_paterno="Lovelace",
-        apellido_materno="Byron",
-        correo=_correo(),
-        contrasena_hash=HASH_SINTETICO,
-        rol=RolUsuario.ADMIN.value,
-        correo_verificado=True,
-        debe_cambiar_contrasena=False,
-        esta_activo=True,
-    )
-    db.add(usuario)
-    db.flush()
-    token = f"cookie-sintetica-{uuid4().hex}"
-    db.add(
-        Sesion(
-            usuario_id=usuario.id,
-            token_hash=hash_token_sesion(token),
-            expira_en=datetime.now(UTC) + timedelta(minutes=30),
-        )
-    )
-    usuario_id = usuario.id
-    db.commit()
-    db.rollback()
-    return usuario_id, token
-
-
 def _crear_sesion(db: Session, usuario: Usuario) -> str:
     token = f"cookie-sintetica-{uuid4().hex}"
     db.add(
@@ -180,14 +152,14 @@ def _crear_owner(db: Session) -> tuple[int, str]:
     return owner_id, token
 
 
-def _crear_operador(db: Session, admin_id: int, correo: str | None = None) -> Usuario:
+def _crear_operador(db: Session, owner_id: int, correo: str | None = None) -> Usuario:
     resultado = crear_operador(
         db,
         nombre="Grace",
         apellido_paterno="Hopper",
         apellido_materno="Murray",
         correo=correo or _correo(),
-        creado_por_usuario_id=admin_id,
+        creado_por_usuario_id=owner_id,
         entregar_invitacion=lambda _usuario, _token: None,
         duracion_token_horas=24,
     )
@@ -249,12 +221,12 @@ def test_creacion_http_guarda_el_owner_autenticado_y_evento_unico(
     assert operador_a.creado_en.tzinfo is not None
     assert operador_b.creado_en.tzinfo is not None
 
-    from app.models import EventoOperador
+    from app.models import EventoTiempoReal
 
     eventos = db.scalars(
-        select(EventoOperador)
-        .where(EventoOperador.operador_id.in_([operador_a.id, operador_b.id]))
-        .order_by(EventoOperador.id)
+        select(EventoTiempoReal)
+        .where(EventoTiempoReal.operador_id.in_([operador_a.id, operador_b.id]))
+        .order_by(EventoTiempoReal.id)
     ).all()
     assert [evento.tipo for evento in eventos] == [
         "operador.creado",
@@ -386,7 +358,7 @@ def test_listado_captura_cursor_antes_de_consultar_la_pagina(
 
 
 def test_listado_carga_creadores_en_lote_sin_n_mas_uno(db: Session) -> None:
-    admin_id, _token = _crear_admin(db)
+    owner_id, _token = _crear_owner(db)
     for _ in range(10):
         db.add(
             Usuario(
@@ -395,7 +367,7 @@ def test_listado_carga_creadores_en_lote_sin_n_mas_uno(db: Session) -> None:
                 apellido_materno="",
                 correo=_correo(),
                 rol=RolUsuario.OPERADOR.value,
-                creado_por_usuario_id=admin_id,
+                creado_por_usuario_id=owner_id,
             )
         )
     db.commit()
@@ -425,24 +397,6 @@ def test_listado_carga_creadores_en_lote_sin_n_mas_uno(db: Session) -> None:
     assert len(consultas_usuarios) <= 3
 
 
-def test_crear_admin_bootstrap_conserva_timestamp_db_y_creador_nulo(
-    db: Session,
-) -> None:
-    resultado = crear_admin(
-        db,
-        nombre="Ada",
-        apellido_paterno="Lovelace",
-        apellido_materno="Byron",
-        correo=_correo(),
-        contrasena="Contrasena sintetica 123",
-        confirmacion_contrasena="Contrasena sintetica 123",
-    )
-    db.refresh(resultado.usuario)
-
-    assert resultado.usuario.creado_en.tzinfo is not None
-    assert resultado.usuario.creado_por_usuario_id is None
-
-
 @pytest.mark.parametrize("estado", ["sin_cookie", "expirada", "revocada", "inactiva"])
 def test_sse_rechaza_sesiones_invalidas_y_cabeceras_falsas(
     db: Session,
@@ -451,10 +405,10 @@ def test_sse_rechaza_sesiones_invalidas_y_cabeceras_falsas(
 ) -> None:
     cookies: dict[str, str] | None = None
     if estado != "sin_cookie":
-        admin_id, token = _crear_admin(db)
+        owner_id, token = _crear_owner(db)
         cookies = {NOMBRE_COOKIE: token}
-        sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == admin_id))
-        usuario = db.get(Usuario, admin_id)
+        sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == owner_id))
+        usuario = db.get(Usuario, owner_id)
         assert sesion is not None
         assert usuario is not None
         if estado == "expirada":
@@ -470,8 +424,8 @@ def test_sse_rechaza_sesiones_invalidas_y_cabeceras_falsas(
         client.cookies.set(NOMBRE_COOKIE, cookies[NOMBRE_COOKIE])
     try:
         respuesta = client.get(
-            f"{RUTA_EVENTOS}?role=ADMIN&admin_id=1&token=forged",
-            headers={"X-Role": "ADMIN", "X-User-Id": "1"},
+            f"{RUTA_EVENTOS}?role=ADMIN&owner_id=1&token=forged",
+            headers={"X-Role": "OWNER", "X-User-Id": "1"},
         )
     finally:
         if cookies:
@@ -488,7 +442,7 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
     monkeypatch: pytest.MonkeyPatch,
     ruta: str,
 ) -> None:
-    admin_id, token = _crear_admin(db)
+    owner_id, token = _crear_owner(db)
 
     def consultar_lote(**argumentos: object) -> ResultadoLoteEventosSSE:
         if argumentos["cursor"] == 0:
@@ -535,7 +489,7 @@ def test_sse_valido_devuelve_cabeceras_seguras_y_cierra_lease(
 
     db.rollback()
     leases = db.scalars(
-        select(ConexionSSEAdmin).where(ConexionSSEAdmin.admin_usuario_id == admin_id)
+        select(ConexionSSEUsuario).where(ConexionSSEUsuario.usuario_id == owner_id)
     ).all()
     assert len(leases) == 1
     assert leases[0].cerrada_en is not None
@@ -581,7 +535,7 @@ def test_sse_incluye_instantanea_durable_de_cajon(
     monkeypatch.setattr(rutas_eventos, "_cerrar_lease_sse", cerrar)
     contexto = rutas_eventos.ContextoStreamTiempoReal(
         usuario_id=1,
-        rol_usuario="ADMIN",
+        rol_usuario="OWNER",
         token_sesion="token-sintetico-de-prueba",
         lease_id=uuid4(),
         cursor=0,
@@ -610,7 +564,7 @@ def test_sesion_operador_no_puede_ampliar_su_politica_con_query_ni_headers(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    admin_id, _admin_token = _crear_admin(db)
+    owner_id, _owner_token = _crear_owner(db)
     operador = Usuario(
         nombre="Grace",
         apellido_paterno="Hopper",
@@ -653,7 +607,7 @@ def test_sesion_operador_no_puede_ampliar_su_politica_con_query_ni_headers(
     client.cookies.set(NOMBRE_COOKIE, token)
     respuesta = client.get(
         "/api/eventos?cursor_eventos=0&rol=ADMIN&topic=operador.creado",
-        headers={"X-Role": "ADMIN", "X-User-Id": "1"},
+        headers={"X-Role": "OWNER", "X-User-Id": "1"},
     )
     client.cookies.delete(NOMBRE_COOKIE)
 
@@ -672,19 +626,19 @@ def test_last_event_id_invalido_se_rechaza_antes_de_abrir_lease(
     client: TestClient,
     valor: str,
 ) -> None:
-    admin_id, token = _crear_admin(db)
+    owner_id, token = _crear_owner(db)
     client.cookies.set(NOMBRE_COOKIE, token)
     respuesta = client.get(RUTA_EVENTOS, headers={"Last-Event-ID": valor})
     client.cookies.delete(NOMBRE_COOKIE)
 
     assert respuesta.status_code == 400
-    from app.models import ConexionSSEAdmin
+    from app.models import ConexionSSEUsuario
 
     assert (
         db.scalar(
             select(func.count())
-            .select_from(ConexionSSEAdmin)
-            .where(ConexionSSEAdmin.admin_usuario_id == admin_id)
+            .select_from(ConexionSSEUsuario)
+            .where(ConexionSSEUsuario.usuario_id == owner_id)
         )
         == 0
     )
@@ -695,15 +649,15 @@ def test_retention_gap_emite_resync_con_solo_metadata_segura(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    admin_id, token = _crear_admin(db)
-    operador = _crear_operador(db, admin_id)
+    owner_id, token = _crear_owner(db)
+    operador = _crear_operador(db, owner_id)
     db.rollback()
-    db.execute(delete(EventoOperador))
-    estado = db.get(EstadoEventosOperadores, 1)
+    db.execute(delete(EventoTiempoReal))
+    estado = db.get(EstadoEventosTiempoReal, 1)
     assert estado is not None
     estado.ultimo_id = 4
     db.add(
-        EventoOperador(
+        EventoTiempoReal(
             id=4,
             operador_id=operador.id,
             tipo="operador.actualizado",
@@ -738,10 +692,10 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    admin_id, token = _crear_admin(db)
-    lease_id = admitir_conexion_sse_admin(
+    owner_id, token = _crear_owner(db)
+    lease_id = admitir_conexion_sse(
         db,
-        admin_usuario_id=admin_id,
+        usuario_id=owner_id,
         token_sesion=token,
     )
     motor = db.get_bind()
@@ -786,8 +740,8 @@ def test_sesion_y_transaccion_se_cierran_antes_de_yield_y_disconnect(
         lambda contexto: limpiezas.append(contexto.lease_id),
     )
     contexto = rutas_eventos.ContextoStreamTiempoReal(
-        usuario_id=admin_id,
-        rol_usuario="ADMIN",
+        usuario_id=owner_id,
+        rol_usuario="OWNER",
         token_sesion=token,
         lease_id=lease_id,
         cursor=0,

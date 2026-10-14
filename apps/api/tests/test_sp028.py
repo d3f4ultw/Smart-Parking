@@ -18,12 +18,11 @@ from sqlalchemy.engine import URL
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.correo.errores import ErrorCorreo, ErrorEnvioCorreo
 from app.correo.mensajes import (
     ASUNTO_REGENERACION_CREDENCIALES_OPERADOR,
-    DatosActivacionCorreo,
     construir_mensaje_regeneracion_credenciales_operador,
 )
 from app.models import RolUsuario, Sesion, Usuario
@@ -35,12 +34,11 @@ from app.seguridad.contrasenas import (
 from app.seguridad.sesiones import hash_token_sesion
 from app.servicios import autenticacion as servicio_autenticacion
 from app.servicios.operadores import desactivar_operador, regenerar_contrasena_operador
-from app.servicios.usuarios import crear_admin
 from main import app
 
 RUTA_OPERADORES = "/api/admin/operadores"
-NOMBRE_COOKIE = "smart_parking_session"
-CONTRASENA_ADMIN = "Contrasena segura SP028 123"
+NOMBRE_COOKIE = get_settings().session_cookie_name
+CONTRASENA_OWNER = "Contrasena segura SP028 123"
 CONTRASENA_OPERADOR = "Operador anterior SP028 123"
 
 
@@ -51,7 +49,7 @@ class TransporteFalso:
         self.mensajes: list[EmailMessage] = []
         self.error = error
 
-    def enviar(self, datos: DatosActivacionCorreo | EmailMessage) -> None:
+    def enviar(self, datos: EmailMessage) -> None:
         if self.error is not None:
             raise self.error
         if not isinstance(datos, EmailMessage):
@@ -87,24 +85,32 @@ def settings_de_prueba(**overrides: Any) -> Settings:
     return Settings(**valores)
 
 
-def crear_admin_autenticado(db: Session) -> str:
-    resultado = crear_admin(
-        db,
+def crear_usuario_roleless(db: Session) -> Usuario:
+    """Crea una identidad sin rol para comprobar el filtro de cuentas."""
+
+    usuario = Usuario(
         nombre="Katherine",
         apellido_paterno="Johnson",
         apellido_materno="Coleman",
         correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
+        contrasena_hash=crear_hash_contrasena(CONTRASENA_OWNER),
+        rol=None,
+        esta_activo=True,
+        correo_verificado=True,
+        debe_cambiar_contrasena=False,
     )
-    usuario = resultado.usuario
-    usuario.esta_activo = True
-    usuario.correo_verificado = True
-    usuario.debe_cambiar_contrasena = False
+    db.add(usuario)
     db.commit()
+    db.refresh(usuario)
     db.rollback()
+    return usuario
 
-    token = f"token-sp028-admin-{uuid4().hex}"
+
+def crear_operador_denegado(db: Session) -> str:
+    """Crea una sesión sintética que carece de permisos OWNER."""
+
+    usuario = crear_operador_prueba(db)
+    token = f"token-sp028-operador-denegado-{uuid4().hex}"
     ahora = datetime.now(UTC)
     db.add(
         Sesion(
@@ -117,24 +123,43 @@ def crear_admin_autenticado(db: Session) -> str:
     )
     db.commit()
     db.rollback()
+    assert servicio_autenticacion.obtener_usuario_por_token(db, token=token) is not None
     return token
 
 
 def crear_owner_autenticado(db: Session) -> str:
-    """Crea una sesion sintetica cuyo rol actual es OWNER."""
+    """Crea directamente una cuenta y una sesión OWNER de prueba."""
 
-    token = crear_admin_autenticado(db)
-    sesion = db.scalar(
-        select(Sesion).where(Sesion.token_hash == hash_token_sesion(token))
+    usuario = Usuario(
+        nombre="Katherine",
+        apellido_paterno="Johnson",
+        apellido_materno="Coleman",
+        correo=correo_de_prueba(),
+        contrasena_hash=crear_hash_contrasena(CONTRASENA_OWNER),
+        rol=RolUsuario.OWNER.value,
+        esta_activo=True,
+        correo_verificado=True,
+        debe_cambiar_contrasena=False,
     )
-    if sesion is None:
-        pytest.fail("No se encontro la sesion sintetica OWNER.")
-    usuario = db.get(Usuario, sesion.usuario_id)
-    if usuario is None:
-        pytest.fail("No se encontro la cuenta sintetica OWNER.")
-    usuario.rol = RolUsuario.OWNER.value
+    db.add(usuario)
+    db.commit()
+    db.refresh(usuario)
+    db.rollback()
+
+    token = f"token-sp028-owner-{uuid4().hex}"
+    ahora = datetime.now(UTC)
+    db.add(
+        Sesion(
+            usuario_id=usuario.id,
+            token_hash=hash_token_sesion(token),
+            expira_en=ahora + timedelta(minutes=30),
+            revocado_en=None,
+            creado_en=ahora,
+        )
+    )
     db.commit()
     db.rollback()
+    assert servicio_autenticacion.obtener_usuario_por_token(db, token=token) is not None
     return token
 
 
@@ -266,15 +291,7 @@ def test_owner_lista_y_consulta_solo_operadores_con_campos_permitidos(
     token = crear_owner_autenticado(db)
     operador_a = crear_operador_prueba(db, correo=correo_de_prueba())
     operador_b = crear_operador_prueba(db, correo=correo_de_prueba())
-    otro_admin = crear_admin(
-        db,
-        nombre="Ada",
-        apellido_paterno="Lovelace",
-        apellido_materno="Byron",
-        correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
-    ).usuario
+    otra_identidad = crear_usuario_roleless(db)
 
     respuesta = solicitar_con_cookie(client, "GET", RUTA_OPERADORES, token=token)
 
@@ -308,7 +325,7 @@ def test_owner_lista_y_consulta_solo_operadores_con_campos_permitidos(
         for fila in filas
     )
     assert all(fila["creado_por"] is None for fila in filas)
-    assert all(fila["id"] != otro_admin.id for fila in filas)
+    assert all(fila["id"] != otra_identidad.id for fila in filas)
     assert "contrasena_hash" not in respuesta.text
     assert "correo_verificado" not in respuesta.text
     assert "debe_cambiar_contrasena" not in respuesta.text
@@ -328,7 +345,7 @@ def test_owner_lista_y_consulta_solo_operadores_con_campos_permitidos(
     detalle_admin = solicitar_con_cookie(
         client,
         "GET",
-        f"{RUTA_OPERADORES}/{otro_admin.id}",
+        f"{RUTA_OPERADORES}/{otra_identidad.id}",
         token=token,
     )
     detalle_ausente = solicitar_con_cookie(
@@ -382,7 +399,7 @@ def test_owner_crea_operador_con_la_invitacion_existente(
 @pytest.mark.parametrize(
     ("rol_nuevo", "estado_esperado"),
     [
-        (RolUsuario.ADMIN.value, 403),
+        (RolUsuario.OPERADOR.value, 403),
         (None, 401),
     ],
 )
@@ -647,7 +664,7 @@ def test_owner_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
         f"{RUTA_OPERADORES}?buscar=",
         token=token,
     )
-    admin_no_incluido = solicitar_con_cookie(
+    roleless_no_incluido = solicitar_con_cookie(
         client,
         "GET",
         f"{RUTA_OPERADORES}?buscar=Katherine",
@@ -661,7 +678,7 @@ def test_owner_busca_en_todas_las_paginas_y_cuenta_antes_de_paginar(
     )
     assert espacios.json()["total"] == sin_busqueda.json()["total"] == 21
     assert espacios.json()["total_paginas"] == sin_busqueda.json()["total_paginas"] == 3
-    assert admin_no_incluido.json()["total"] == 0
+    assert roleless_no_incluido.json()["total"] == 0
     assert consulta_excesiva.status_code == 422
 
 
@@ -714,7 +731,7 @@ def test_owner_lista_operadores_sin_resultados_y_rechaza_pagina_no_positiva(
         ("POST", f"{RUTA_OPERADORES}/1/reenviar-invitacion", None),
     ],
 )
-def test_admin_no_accede_y_las_rutas_exigen_sesion_owner(
+def test_operador_no_accede_y_las_rutas_exigen_sesion_owner(
     db: Session,
     client: TestClient,
     transporte_falso: tuple[TransporteFalso, Settings],
@@ -726,7 +743,7 @@ def test_admin_no_accede_y_las_rutas_exigen_sesion_owner(
     operador = crear_operador_prueba(db)
     token_operador = agregar_sesion(db, operador)
     db.rollback()
-    token_admin = crear_admin_autenticado(db)
+    token_no_owner = crear_operador_denegado(db)
     token_owner_revocado = crear_owner_autenticado(db)
     sesion_owner_revocada = db.scalar(
         select(Sesion).where(
@@ -760,11 +777,11 @@ def test_admin_no_accede_y_las_rutas_exigen_sesion_owner(
         token=token_operador,
         cuerpo=cuerpo,
     )
-    respuesta_admin = solicitar_con_cookie(
+    respuesta_no_owner = solicitar_con_cookie(
         client,
         metodo,
         ruta,
-        token=token_admin,
+        token=token_no_owner,
         cuerpo=cuerpo,
     )
     respuesta_cookie_invalida = solicitar_con_cookie(
@@ -791,12 +808,12 @@ def test_admin_no_accede_y_las_rutas_exigen_sesion_owner(
 
     assert respuesta_anonima.status_code == 401
     assert respuesta_operador.status_code == 403
-    assert respuesta_admin.status_code == 403
-    assert respuesta_admin.json() == {"detail": "Acceso denegado"}
-    assert operador.correo not in respuesta_admin.text
+    assert respuesta_no_owner.status_code == 403
+    assert respuesta_no_owner.json() == {"detail": "Acceso denegado"}
+    assert operador.correo not in respuesta_no_owner.text
     assert respuesta_cookie_invalida.status_code == 401
     assert respuesta_sesion_revocada.status_code == 401
-    assert respuesta_admin.headers["cache-control"] == "no-store"
+    assert respuesta_no_owner.headers["cache-control"] == "no-store"
     assert respuesta_sesion_expirada.status_code == 401
     assert respuesta_sesion_revocada.headers["cache-control"] == "no-store"
     assert transporte.mensajes == []
@@ -816,17 +833,9 @@ def test_mutaciones_devuelven_404_para_id_ausente_o_rol_distinto(
 ) -> None:
     transporte, _settings = transporte_falso
     token_admin = crear_owner_autenticado(db)
-    admin_ajeno = crear_admin(
-        db,
-        nombre="Ada",
-        apellido_paterno="Lovelace",
-        apellido_materno="Byron",
-        correo=correo_de_prueba(),
-        contrasena=CONTRASENA_ADMIN,
-        confirmacion_contrasena=CONTRASENA_ADMIN,
-    ).usuario
+    otra_identidad = crear_usuario_roleless(db)
 
-    for operador_id in (admin_ajeno.id, 999999):
+    for operador_id in (otra_identidad.id, 999999):
         for accion in (
             "desactivar",
             "reactivar",

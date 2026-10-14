@@ -15,18 +15,14 @@ from app.correo.errores import (
     ErrorCorreo,
     ErrorEnvioCorreo,
 )
-from app.correo.mensajes import (
-    DatosActivacionCorreo,
-    construir_mensaje_activacion,
-)
 from app.seguridad.correos import CorreoInvalidoError, normalizar_correo
 
 
 class TransporteCorreo(Protocol):
     """Seam minimo que permite seleccionar otro transporte en pruebas."""
 
-    def enviar(self, datos: DatosActivacionCorreo | EmailMessage) -> None:
-        """Entrega activaciones o mensajes MIME ya construidos."""
+    def enviar(self, mensaje: EmailMessage) -> None:
+        """Entrega un mensaje MIME ya construido."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,12 +117,7 @@ class SMTPTransport:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings
 
-    def enviar(self, datos: DatosActivacionCorreo | EmailMessage) -> None:
-        mensaje = (
-            datos
-            if isinstance(datos, EmailMessage)
-            else construir_mensaje_activacion(datos, settings=self._settings)
-        )
+    def enviar(self, mensaje: EmailMessage) -> None:
         configuracion = cargar_configuracion_smtp(self._settings)
         contexto = ssl.create_default_context()
 

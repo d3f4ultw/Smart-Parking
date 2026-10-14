@@ -410,10 +410,10 @@ test('Nitro BFF security boundary preserves upstream contracts', {
   }
 
   try {
-    await suite.test('cookie matrix and ADMIN denial semantics', async () => {
+    await suite.test('cookie matrix and OWNER session semantics', async () => {
       const states = [
         { name: 'anonymous', value: undefined, status: 401 },
-        { name: 'ADMIN', value: marker(), status: 200 },
+        { name: 'OWNER', value: marker(), status: 200 },
         { name: 'OPERADOR', value: marker(), status: 401 },
         { name: 'random', value: marker(), status: 401 },
         { name: 'revoked', value: marker(), status: 401 },
@@ -442,7 +442,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         )
         assert.ok(
           result.response.headers.get('cache-control') === 'no-store',
-          'ADMIN response remains no-store',
+          'OWNER response remains no-store',
         )
         assertNoSensitiveBody(result.body)
       }
@@ -452,8 +452,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         {
           headers: {
             cookie: `unrelated=${marker()}`,
-            'x-user-role': 'ADMIN',
-            'x-role': 'ADMIN',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
             'x-user-id': '1',
           },
         },
@@ -486,8 +486,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         {
           headers: {
             cookie,
-            'x-user-role': 'ADMIN',
-            'x-role': 'ADMIN',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
             'x-user-id': '41',
             authorization: `Bearer ${deviceToken}`,
           },
@@ -515,8 +515,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         '/api/admin/cajones',
         {
           headers: {
-            'x-user-role': 'ADMIN',
-            'x-role': 'ADMIN',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
             'x-user-id': '1',
             authorization: `Bearer ${deviceToken}`,
           },
@@ -826,8 +826,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
           headers: {
             cookie: `smart_parking_session=${sessionCookie}; unrelated=${unrelatedCookie}`,
             'content-type': 'application/json',
-            'x-user-role': 'ADMIN',
-            'x-role': 'ADMIN',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
             'x-user-id': '41',
             authorization: `Bearer ${deviceToken}`,
           },
@@ -926,8 +926,8 @@ test('Nitro BFF security boundary preserves upstream contracts', {
           method: 'PATCH',
           headers: {
             'content-type': 'application/json',
-            'x-user-role': 'ADMIN',
-            'x-role': 'ADMIN',
+            'x-user-role': 'OWNER',
+            'x-role': 'OWNER',
             'x-user-id': '1',
             authorization: `Bearer ${deviceToken}`,
           },
@@ -987,7 +987,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       const me = await send(
         '/api/autenticacion/me',
         { headers: { cookie: sessionCookie } },
-        jsonPlan(200, { autenticado: true, usuario: { rol: 'ADMIN' } }),
+        jsonPlan(200, { autenticado: true, usuario: { rol: 'OWNER' } }),
       )
       assert.ok(me.response.status === 200, 'Current-session status was preserved')
       assertForwarded(me, 'GET', '/api/autenticacion/me')
@@ -1027,7 +1027,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         apellido_paterno: 'Sintetica',
         apellido_materno: '',
         correo: `sp031-${randomUUID()}@example.invalid`,
-        rol: 'ADMIN',
+        rol: 'OWNER',
         user_id: 1,
       })
       const create = await send(
@@ -1070,7 +1070,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assertNoSensitiveBody(acceptedCreate.body)
 
       const page = await send(
-        `/api/admin/operadores?pagina=2&rol=ADMIN&user_id=${marker()}`,
+        `/api/admin/operadores?pagina=2&rol=OWNER&user_id=${marker()}`,
         { headers: { cookie: `smart_parking_session=${marker()}` } },
         jsonPlan(200, { pagina: 2, operadores: [] }),
       )
@@ -1080,7 +1080,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
 
       const searchCookie = 'smart_parking_session=' + marker()
       const searchedPage = await send(
-        '/api/admin/operadores?pagina=2&buscar=Coincidencia+Global&rol=ADMIN&user_id=' + marker(),
+        '/api/admin/operadores?pagina=2&buscar=Coincidencia+Global&rol=OWNER&user_id=' + marker(),
         { headers: { cookie: searchCookie } },
         jsonPlan(200, { pagina: 2, operadores: [], total: 0, total_paginas: 0 }),
       )
@@ -1096,7 +1096,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       )
       assert.ok(
         searchedPage.upstreamRequest.cookie === searchCookie,
-        'The ADMIN session cookie remains forwarded',
+        'The OWNER session cookie remains forwarded',
       )
       assert.ok(
         searchedPage.response.headers.get('cache-control') === 'no-store',
@@ -1126,7 +1126,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assert.ok(malformed.upstreamRequest.body === malformedBody, 'Malformed body was not rewritten')
 
       const detail = await send(
-        '/api/admin/operadores/41?id=999&rol=ADMIN',
+        '/api/admin/operadores/41?id=999&rol=OWNER',
         { headers: { cookie: `smart_parking_session=${marker()}` } },
         jsonPlan(200, { id: 41, estado_cuenta: 'acceso_habilitado' }),
       )
@@ -1212,7 +1212,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       })
 
       const respuesta = await fetch(
-        `${harness.origin}/api/eventos?cursor_eventos=41&rol=ADMIN&topic=operador.creado`,
+        `${harness.origin}/api/eventos?cursor_eventos=41&rol=OWNER&topic=operador.creado`,
         { headers: { cookie }, signal: AbortSignal.timeout(10_000) },
       )
       assert.equal(respuesta.status, 200, 'SSE response status is preserved')
@@ -1403,7 +1403,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
 
       const injectedBody = JSON.stringify({
         token: activationToken,
-        rol: 'ADMIN',
+        rol: 'OWNER',
         user_id: '900',
         email: 'attacker@example.invalid',
         id: '900',
@@ -1488,25 +1488,13 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         assert.ok(result.response.headers.get('referrer-policy') === 'no-referrer', 'Replay response remains no-referrer')
       }
 
-      for (const activationPath of [
-        '/api/activacion/prevalidar',
-        '/api/activacion/manual',
-      ]) {
-        const responsePath = activationPath.endsWith('prevalidar')
-          ? '/api/autenticacion/activacion/prevalidar'
-          : '/api/autenticacion/activar/manual'
+      for (const activationPath of ['/api/activacion/prevalidar', '/api/activacion/manual']) {
+        const requestsBefore = harness.requests.length
         const result = await send(
           activationPath,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ token: activationToken }),
-          },
-          jsonPlan(422, { detail: 'Solicitud invalida' }, { 'cache-control': 'no-store' }),
         )
-        assert.ok(result.response.status === 422, 'General activation status was preserved')
-        assertForwarded(result, 'POST', responsePath)
-        assert.ok(result.response.headers.get('cache-control') === 'no-store', 'General activation preserved backend no-store')
+        assert.ok(result.response.status === 404, 'Retired activation endpoint stays unavailable')
+        assert.ok(harness.requests.length === requestsBefore, 'Retired activation endpoint did not reach FastAPI')
       }
 
       const invalidModeBefore = harness.requests.length
@@ -1820,7 +1808,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
-    await suite.test('credential replacement remains ADMIN-only and secret-safe', async () => {
+    await suite.test('credential replacement remains OWNER-only and secret-safe', async () => {
       const cases = [
         { cookie: undefined, status: 401 },
         { cookie: `smart_parking_session=${marker()}`, status: 401 },

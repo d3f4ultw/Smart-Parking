@@ -23,12 +23,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.rutas.activaciones_operador import NOMBRE_COOKIE_DESAFIO
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.database import get_db
 from app.correo.errores import ErrorCorreo, ErrorEnvioCorreo
 from app.models import ActivacionCuenta, RolUsuario, Sesion, Usuario
 from app.seguridad.activaciones import hash_token_activacion
-from app.seguridad.contrasenas import verificar_contrasena
+from app.seguridad.contrasenas import crear_hash_contrasena, verificar_contrasena
 from app.seguridad.sesiones import hash_token_sesion
 from app.servicios.activaciones_operador import (
     ActivacionOperadorNoDisponible,
@@ -42,17 +42,13 @@ from app.servicios.operadores import (
     reenviar_invitacion_operador as reenviar_invitacion_operador_servicio,
 )
 from app.servicios.usuarios import (
-    crear_admin,
-    crear_admin_pendiente,
-)
-from app.servicios.usuarios import (
     crear_operador as crear_operador_servicio,
 )
 from main import app
 
 RUTA_CREAR_OPERADOR = "/api/admin/operadores"
 RUTA_ACTIVACION = "/api/autenticacion/activacion-operador"
-NOMBRE_COOKIE_SESION = "smart_parking_session"
+NOMBRE_COOKIE_SESION = get_settings().session_cookie_name
 CONTRASENA_OWNER = "Contrasena segura SP031 123"
 CONTRASENA_OPERADOR = "Operador inicial SP031 123"
 CONTRASENA_NUEVA = "Nueva clave SP031 456"
@@ -135,19 +131,18 @@ def crear_owner_autenticado(db: Session) -> str:
     )
     db.rollback()
     if usuario_id is None:
-        resultado = crear_admin(
-            db,
+        usuario = Usuario(
             nombre="Katherine",
             apellido_paterno="Johnson",
             apellido_materno="Coleman",
             correo=correo_de_prueba(),
-            contrasena=CONTRASENA_OWNER,
-            confirmacion_contrasena=CONTRASENA_OWNER,
+            contrasena_hash=crear_hash_contrasena(CONTRASENA_OWNER),
+            rol=RolUsuario.OWNER.value,
+            correo_verificado=True,
+            esta_activo=True,
+            debe_cambiar_contrasena=False,
         )
-        usuario = resultado.usuario
-        usuario.rol = RolUsuario.OWNER.value
-        usuario.correo_verificado = True
-        usuario.debe_cambiar_contrasena = False
+        db.add(usuario)
         db.commit()
         usuario_id = usuario.id
         db.rollback()
@@ -215,21 +210,6 @@ def crear_invitacion(
     operador = db.scalar(select(Usuario).where(Usuario.correo == correo_operador))
     assert operador is not None
     return operador, token_invitacion, transporte, settings, token_owner
-
-
-def crear_invitacion_admin(db: Session) -> tuple[Usuario, str]:
-    tokens: list[str] = []
-    resultado = crear_admin_pendiente(
-        db,
-        nombre="Katherine",
-        apellido_paterno="Johnson",
-        apellido_materno="Coleman",
-        correo=correo_de_prueba(),
-        entregar_invitacion=lambda _usuario, token: tokens.append(token),
-        duracion_token_horas=24,
-    )
-    assert len(tokens) == 1
-    return resultado.usuario, tokens[0]
 
 
 def intercambiar_enlace(client: TestClient, token: str):
@@ -462,82 +442,6 @@ def test_creacion_canje_completado_y_login_normal_sin_sesion_en_activacion(
     assert login.json() == {
         "estado": "credenciales_validas",
         "rol": RolUsuario.OPERADOR.value,
-    }
-
-
-def test_admin_pendiente_usa_el_mismo_enlace_challenge_y_login_normal(
-    db: Session,
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    settings = settings_de_prueba()
-    monkeypatch.setattr(
-        "app.api.rutas.activaciones_operador.get_settings",
-        lambda: settings,
-    )
-    admin, token = crear_invitacion_admin(db)
-
-    activacion = db.scalar(
-        select(ActivacionCuenta).where(ActivacionCuenta.usuario_id == admin.id)
-    )
-    assert activacion is not None
-    assert activacion.codigo_hash is None
-    assert activacion.token_hash == hash_token_activacion(token)
-    assert admin.rol == RolUsuario.ADMIN.value
-    assert admin.contrasena_hash is None
-    assert admin.correo_verificado is False
-    assert admin.debe_cambiar_contrasena is False
-
-    login_pendiente = client.post(
-        "/api/autenticacion/login",
-        json={"correo": admin.correo, "contrasena": CONTRASENA_NUEVA},
-    )
-    assert login_pendiente.status_code == 401
-    assert login_pendiente.json() == {"detail": "Credenciales invalidas"}
-    assert "set-cookie" not in login_pendiente.headers
-    assert client.get("/api/autenticacion/me").status_code == 401
-
-    canje = intercambiar_enlace(client, token)
-    assert canje.status_code == 204
-    desafio = valor_cookie(canje, NOMBRE_COOKIE_DESAFIO)
-    extra_rol = client.post(
-        f"{RUTA_ACTIVACION}/enlace",
-        json={"token": token, "rol": RolUsuario.OPERADOR.value},
-    )
-    assert extra_rol.status_code == 422
-
-    completar = solicitar_con_cookies(
-        client,
-        "POST",
-        f"{RUTA_ACTIVACION}/completar",
-        json={"nueva_contrasena": CONTRASENA_NUEVA},
-        cookies={NOMBRE_COOKIE_DESAFIO: desafio},
-    )
-    assert completar.status_code == 200
-    assert "smart_parking_session" not in completar.headers.get("set-cookie", "")
-
-    db.rollback()
-    usuario = db.get(Usuario, admin.id)
-    activacion_actual = db.get(ActivacionCuenta, activacion.id)
-    assert usuario is not None
-    assert usuario.rol == RolUsuario.ADMIN.value
-    assert usuario.correo_verificado is True
-    assert usuario.debe_cambiar_contrasena is False
-    assert usuario.contrasena_hash is not None
-    assert verificar_contrasena(CONTRASENA_NUEVA, usuario.contrasena_hash)
-    assert activacion_actual is not None
-    assert activacion_actual.consumido_en is not None
-    assert activacion_actual.desafio_hash is None
-    assert db.scalar(select(Sesion.id).where(Sesion.usuario_id == admin.id)) is None
-
-    login = client.post(
-        "/api/autenticacion/login",
-        json={"correo": admin.correo, "contrasena": CONTRASENA_NUEVA},
-    )
-    assert login.status_code == 200
-    assert login.json() == {
-        "estado": "credenciales_validas",
-        "rol": RolUsuario.ADMIN.value,
     }
 
 
@@ -973,7 +877,7 @@ def test_dos_completados_simultaneos_consumen_un_solo_desafio(
     assert verificar_contrasena(CONTRASENA_OPERADOR, usuario.contrasena_hash)
 
 
-def test_duplicados_admin_y_correo_normalizado_no_envian_invitaciones_extra(
+def test_duplicados_de_correo_no_envian_invitaciones_extra(
     db: Session,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -992,26 +896,30 @@ def test_duplicados_admin_y_correo_normalizado_no_envian_invitaciones_extra(
     if sesion_owner is None:
         pytest.fail("No se encontro la sesion sintetica OWNER.")
     db.rollback()
-    admin = crear_admin(
-        db,
+    identidad = Usuario(
         nombre="Katherine",
         apellido_paterno="Johnson",
         apellido_materno="Coleman",
         correo=correo_de_prueba(),
-        contrasena=CONTRASENA_OWNER,
-        confirmacion_contrasena=CONTRASENA_OWNER,
-    ).usuario
+        contrasena_hash=crear_hash_contrasena(CONTRASENA_OWNER),
+        rol=None,
+        correo_verificado=True,
+        esta_activo=True,
+        debe_cambiar_contrasena=False,
+    )
+    db.add(identidad)
+    db.commit()
 
-    duplicado_admin = solicitar_con_cookies(
+    duplicado_existente = solicitar_con_cookies(
         client,
         "POST",
         RUTA_CREAR_OPERADOR,
-        json=cuerpo_creacion_operador(admin.correo),
+        json=cuerpo_creacion_operador(identidad.correo),
         cookies={NOMBRE_COOKIE_SESION: token_owner},
     )
-    exigir_estado_http(duplicado_admin, 409, "Correo ya asignado a ADMIN")
+    exigir_estado_http(duplicado_existente, 409, "Correo ya asignado")
     if transporte.mensajes:
-        pytest.fail("El correo duplicado de ADMIN produjo un envio.")
+        pytest.fail("El correo duplicado produjo un envio.")
 
     correo_original = f"SP031.Dupe-{uuid4().hex}@example.com"
     correo_normalizado = correo_original.casefold()
@@ -1273,7 +1181,7 @@ def test_activacion_rechaza_desafio_ausente_alterado_y_replays_y_fija_la_cuenta(
             "nueva_contrasena": CONTRASENA_NUEVA,
             "usuario_id": operador_b.id,
             "correo": operador_b.correo,
-            "rol": RolUsuario.ADMIN.value,
+            "rol": "ADMIN",
             "correo_verificado": True,
             "esta_activo": True,
         },

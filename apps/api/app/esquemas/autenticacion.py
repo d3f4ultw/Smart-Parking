@@ -18,7 +18,7 @@ class RespuestaLogin(BaseModel):
     """Respuesta mínima de login con el rol persistido; el token va en cookie."""
 
     estado: Literal["credenciales_validas"]
-    rol: Literal["ADMIN", "OPERADOR", "OWNER"]
+    rol: Literal["OPERADOR", "OWNER"]
 
 
 class RespuestaLogout(BaseModel):
@@ -34,7 +34,7 @@ class UsuarioSesion(BaseModel):
     apellido_paterno: str | None
     apellido_materno: str | None
     correo: str
-    rol: Literal["ADMIN", "OPERADOR", "OWNER"]
+    rol: Literal["OPERADOR", "OWNER"]
 
 
 class RespuestaSesionActual(BaseModel):

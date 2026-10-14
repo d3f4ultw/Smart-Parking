@@ -12,11 +12,8 @@ from app.models.configuracion_estacionamiento import (
 from app.models.cuenta_propietario import CuentaPropietario
 from app.models.desvinculacion_propietario import DesvinculacionPropietario
 from app.models.eventos_tiempo_real import (
-    ConexionSSEAdmin,
     ConexionSSEUsuario,
-    EstadoEventosOperadores,
     EstadoEventosTiempoReal,
-    EventoOperador,
     EventoTiempoReal,
 )
 from app.models.inscripcion_propietario import InscripcionPropietario
@@ -27,17 +24,14 @@ from app.models.usuario import RolUsuario, Usuario
 __all__ = [
     "ActivacionCuenta",
     "Cajon",
-    "ConexionSSEAdmin",
     "ConexionSSEUsuario",
     "ConfiguracionEstacionamiento",
     "CuentaPropietario",
     "DesvinculacionPropietario",
-    "EstadoEventosOperadores",
     "EstadoEventosTiempoReal",
     "EstadoEfectivoCajon",
     "EstadoFisicoCajon",
     "EstadoOperativoCajon",
-    "EventoOperador",
     "EventoTiempoReal",
     "HistorialModalidadEstacionamiento",
     "InscripcionPropietario",

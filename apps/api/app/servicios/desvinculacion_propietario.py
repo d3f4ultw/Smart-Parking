@@ -27,9 +27,7 @@ from app.servicios.autenticacion import revocar_sesiones_usuario
 VIGENCIA_CONFIRMACION_DESVINCULACION = timedelta(minutes=15)
 VENTANA_SOLICITUDES_DESVINCULACION = timedelta(minutes=30)
 MAXIMAS_SOLICITUDES_DESVINCULACION = 3
-ROLES_ANTERIORES_VALIDOS = frozenset(
-    {None, RolUsuario.ADMIN.value, RolUsuario.OPERADOR.value}
-)
+ROLES_ANTERIORES_VALIDOS = frozenset({None, RolUsuario.OPERADOR.value})
 
 
 class PropietarioNoDisponibleError(ValueError):
@@ -192,12 +190,15 @@ def solicitar_desvinculacion_propietario(
                             pendiente.invalidada_en = instante
 
                         desde = instante - VENTANA_SOLICITUDES_DESVINCULACION
-                        cantidad = db.scalar(
-                            select(func.count(DesvinculacionPropietario.id)).where(
-                                DesvinculacionPropietario.usuario_id == usuario.id,
-                                DesvinculacionPropietario.emitida_en >= desde,
+                        cantidad = (
+                            db.scalar(
+                                select(func.count(DesvinculacionPropietario.id)).where(
+                                    DesvinculacionPropietario.usuario_id == usuario.id,
+                                    DesvinculacionPropietario.emitida_en >= desde,
+                                )
                             )
-                        ) or 0
+                            or 0
+                        )
                         if cantidad >= MAXIMAS_SOLICITUDES_DESVINCULACION:
                             error = LimiteSolicitudesDesvinculacionError()
                         else:

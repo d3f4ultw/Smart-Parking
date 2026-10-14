@@ -3,14 +3,14 @@ import { computed } from 'vue'
 
 definePageMeta({
   layout: 'admin',
-  middleware: 'sesion-admin',
+  middleware: 'sesion-owner',
 })
 
 const { usuario } = useSesion()
 
-const nombreAdmin = computed(() => {
+const nombrePropietario = computed(() => {
   if (usuario.value === null) {
-    return 'Administrador'
+    return 'Propietario'
   }
 
   const nombreCompleto = [
@@ -23,10 +23,8 @@ const nombreAdmin = computed(() => {
 
   return nombreCompleto || usuario.value.correo
 })
-const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Propietario' : 'Administrador')
-const tituloCuenta = computed(() => usuario.value?.rol === 'OWNER'
-  ? 'Cuenta del propietario'
-  : 'Cuenta de administrador')
+const etiquetaRol = 'Propietario'
+const tituloCuenta = 'Cuenta del propietario'
 </script>
 
 <template>
@@ -35,7 +33,7 @@ const tituloCuenta = computed(() => usuario.value?.rol === 'OWNER'
       <div>
         <p class="eyebrow">Smart Parking · Administración</p>
         <h1>Dashboard</h1>
-        <p class="heading-copy">Bienvenido, {{ nombreAdmin }}.</p>
+        <p class="heading-copy">Bienvenido, {{ nombrePropietario }}.</p>
       </div>
     </header>
 
@@ -69,7 +67,7 @@ const tituloCuenta = computed(() => usuario.value?.rol === 'OWNER'
       <dl class="account-details">
         <div>
           <dt>Nombre</dt>
-          <dd>{{ nombreAdmin }}</dd>
+          <dd>{{ nombrePropietario }}</dd>
         </div>
         <div>
           <dt>Correo electrónico</dt>

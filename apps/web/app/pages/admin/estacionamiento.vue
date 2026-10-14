@@ -23,7 +23,7 @@ import {
 
 definePageMeta({
   layout: 'admin',
-  middleware: 'sesion-admin',
+  middleware: 'sesion-owner',
 })
 
 type ResultadoCargaCajones =

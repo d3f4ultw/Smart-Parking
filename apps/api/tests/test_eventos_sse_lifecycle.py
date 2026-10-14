@@ -20,7 +20,7 @@ from app.api.rutas.eventos import ContextoStreamTiempoReal
 def _crear_contexto() -> ContextoStreamTiempoReal:
     contexto = ContextoStreamTiempoReal(
         usuario_id=1,
-        rol_usuario="ADMIN",
+        rol_usuario="OWNER",
         token_sesion="token-sintetico-de-prueba",
         lease_id=uuid4(),
         cursor=0,

@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REVISION_ANTERIOR = "20261002_0003"
@@ -299,7 +300,7 @@ def test_migracion_unificada_preserva_journal_y_concesiones(
             },
         )
 
-    upgrade = _ejecutar_alembic(entorno, "upgrade", "head")
+    upgrade = _ejecutar_alembic(entorno, "upgrade", "20261012_0001")
     assert upgrade.returncode == 0
     with motor.connect() as conexion:
         eventos = conexion.execute(
@@ -411,4 +412,70 @@ def test_migracion_unificada_preserva_journal_y_concesiones(
 
     upgrade_repetido = _ejecutar_alembic(entorno, "upgrade", "head")
     assert upgrade_repetido.returncode == 0
+    motor.dispose()
+
+
+def test_migracion_retiro_admin_inutiliza_cuentas_heredadas(
+    migration_database: tuple[URL, dict[str, str]],
+) -> None:
+    url, entorno = migration_database
+    motor = create_engine(url, pool_pre_ping=True)
+    with motor.begin() as conexion:
+        usuario_id = conexion.scalar(
+            text(
+                "INSERT INTO usuarios "
+                "(nombre, apellido_paterno, apellido_materno, correo, "
+                "contrasena_hash, rol, correo_verificado, "
+                "debe_cambiar_contrasena, esta_activo) "
+                "VALUES ('Admin', 'Legado', 'Sintetico', "
+                "'admin-retirement@example.com', 'hash-sintetico', 'ADMIN', "
+                "true, false, true) RETURNING id"
+            )
+        )
+
+    upgrade = _ejecutar_alembic(entorno, "upgrade", "head")
+    assert upgrade.returncode == 0
+
+    with motor.connect() as conexion:
+        usuario = conexion.execute(
+            text(
+                "SELECT rol, esta_activo, debe_cambiar_contrasena, contrasena_hash "
+                "FROM usuarios WHERE id=:usuario_id"
+            ),
+            {"usuario_id": usuario_id},
+        ).one()
+        assert (
+            usuario.rol,
+            usuario.esta_activo,
+            usuario.debe_cambiar_contrasena,
+            usuario.contrasena_hash,
+        ) == (None, False, True, "hash-sintetico")
+        assert (
+            conexion.scalar(
+                text(
+                    "SELECT column_default FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='usuarios' "
+                    "AND column_name='rol'"
+                )
+            )
+            is None
+        )
+        assert (
+            conexion.scalar(text("SELECT count(*) FROM usuarios WHERE rol='ADMIN'"))
+            == 0
+        )
+
+    with pytest.raises(IntegrityError):
+        with motor.begin() as conexion:
+            conexion.execute(
+                text(
+                    "INSERT INTO usuarios "
+                    "(nombre, apellido_paterno, apellido_materno, correo, "
+                    "contrasena_hash, rol, correo_verificado, "
+                    "debe_cambiar_contrasena, esta_activo) "
+                    "VALUES ('Admin', 'Nuevo', 'Sintetico', "
+                    "'admin-rejected@example.com', 'hash-sintetico', 'ADMIN', "
+                    "true, false, true)"
+                )
+            )
     motor.dispose()

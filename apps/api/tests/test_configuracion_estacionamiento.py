@@ -11,7 +11,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.cli import configuracion_estacionamiento as cli
-from app.cli import gestionar_admins
 from app.models import (
     ConfiguracionEstacionamiento,
     HistorialModalidadEstacionamiento,
@@ -148,9 +147,7 @@ def test_suspend_resume_preserva_modalidad_y_solo_revision_cambia_estado(
     assert [
         (fila.modalidad_anterior, fila.modalidad_nueva)
         for fila in listar_historial_modalidad(db)
-    ] == [
-        (None, "MIXTO")
-    ]
+    ] == [(None, "MIXTO")]
 
     repetida = cambiar_estado_acceso_estacionamiento(
         db,
@@ -161,8 +158,7 @@ def test_suspend_resume_preserva_modalidad_y_solo_revision_cambia_estado(
     assert repetida.configuracion is not None
     assert repetida.configuracion.revision == 2
     assert (
-        repetida.configuracion.actualizado_en
-        == suspendida.configuracion.actualizado_en
+        repetida.configuracion.actualizado_en == suspendida.configuracion.actualizado_en
     )
     assert len(listar_historial_modalidad(db)) == 1
 
@@ -229,9 +225,7 @@ def test_modalidad_no_cambia_mientras_el_acceso_esta_suspendido(db: Session) -> 
     assert [
         (fila.modalidad_anterior, fila.modalidad_nueva)
         for fila in listar_historial_modalidad(db)
-    ] == [
-        (None, "PRIVADO")
-    ]
+    ] == [(None, "PRIVADO")]
 
 
 def test_cambios_confirmados_persisten_al_renovar_la_sesion(db: Session) -> None:
@@ -354,16 +348,15 @@ def test_cli_muestra_estado_historial_y_regresa_al_menu_principal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    respuestas = iter(["2", "0", "0"])
+    respuestas = iter(["2", "", "0"])
     monkeypatch.setattr("builtins.input", lambda _prompt: next(respuestas))
-    monkeypatch.setattr(gestionar_admins, "get_settings", lambda: None)
-    monkeypatch.setattr(gestionar_admins, "limpiar_pantalla", lambda: None)
-    assert gestionar_admins.main(db=db) == 0
+    monkeypatch.setattr(cli, "limpiar_pantalla", lambda: None)
+    assert cli.main(db=db) == 0
 
     salida = capsys.readouterr()
     assert "CONFIGURACIÓN DEL ESTACIONAMIENTO" in salida.out
     assert "Modalidad actual: SIN CONFIGURAR" in salida.out
-    assert "SMART PARKING — ADMINISTRACIÓN LOCAL" in salida.out
+    assert "CONFIGURACIÓN DEL ESTACIONAMIENTO" in salida.out
 
 
 def test_cli_rechaza_entradas_vacias_y_cancelar_no_crea_configuracion(

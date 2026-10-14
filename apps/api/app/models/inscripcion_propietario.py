@@ -33,7 +33,7 @@ class InscripcionPropietario(Base):
             name="ck_inscripciones_propietario_desafio_completo",
         ),
         CheckConstraint(
-            "rol_anterior IS NULL OR rol_anterior IN ('ADMIN', 'OPERADOR')",
+            "rol_anterior IS NULL OR rol_anterior = 'OPERADOR'",
             name="ck_inscripciones_propietario_rol_anterior",
         ),
         CheckConstraint(

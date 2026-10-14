@@ -20,7 +20,6 @@ from app.api.rutas import gestion_propietario as rutas_gestion
 from app.api.rutas.gestion_propietario import NOMBRE_COOKIE_GESTION_PROPIETARIO
 from app.core.config import Settings
 from app.core.database import get_db
-from app.correo.mensajes import DatosActivacionCorreo
 from app.models import SesionGestionPropietario
 from app.servicios.gestion_propietario import (
     CodigoApareamientoInvalido,
@@ -41,7 +40,7 @@ class TransporteFalso:
     def __init__(self) -> None:
         self.mensajes: list[EmailMessage] = []
 
-    def enviar(self, mensaje: DatosActivacionCorreo | EmailMessage) -> None:
+    def enviar(self, mensaje: EmailMessage) -> None:
         assert isinstance(mensaje, EmailMessage)
         self.mensajes.append(mensaje)
 

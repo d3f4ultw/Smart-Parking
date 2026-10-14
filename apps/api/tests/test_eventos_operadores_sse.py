@@ -17,9 +17,9 @@ from sqlalchemy.orm import Session
 from app.correo.errores import ErrorEnvioCorreo
 from app.models import (
     ActivacionCuenta,
-    ConexionSSEAdmin,
-    EstadoEventosOperadores,
-    EventoOperador,
+    ConexionSSEUsuario,
+    EstadoEventosTiempoReal,
+    EventoTiempoReal,
     RolUsuario,
     Sesion,
     Usuario,
@@ -32,9 +32,7 @@ from app.servicios.eventos_operadores import (
     MAXIMO_EVENTOS_RETENIDOS,
     LimiteConexionesSSEError,
     admitir_conexion_sse,
-    admitir_conexion_sse_admin,
-    cerrar_conexion_sse_admin,
-    consultar_lote_eventos_sse,
+    cerrar_conexion_sse,
     consultar_lote_eventos_usuario,
     registrar_evento_cajon,
     registrar_evento_operador,
@@ -57,56 +55,38 @@ def _correo() -> str:
     return f"eventos-sse-{uuid4().hex}@example.com"
 
 
-def _crear_admin(db: Session) -> tuple[int, str]:
-    admin = Usuario(
-        nombre="Katherine",
-        apellido_paterno="Johnson",
-        apellido_materno="Coleman",
-        correo=_correo(),
-        contrasena_hash=HASH_SINTETICO,
-        rol=RolUsuario.ADMIN.value,
-        correo_verificado=True,
-        debe_cambiar_contrasena=False,
-        esta_activo=True,
-    )
-    db.add(admin)
-    db.flush()
-    token = f"token-sintetico-{uuid4().hex}"
-    db.add(
-        Sesion(
-            usuario_id=admin.id,
-            token_hash=hash_token_sesion(token),
-            expira_en=datetime.now(UTC) + timedelta(hours=1),
+def _crear_owner(db: Session) -> tuple[int, str]:
+    owner_id = db.scalar(
+        select(Usuario.id).where(
+            Usuario.rol == RolUsuario.OWNER.value,
+            Usuario.esta_activo.is_(True),
         )
     )
-    admin_id = admin.id
-    db.commit()
     db.rollback()
-    return admin_id, token
-
-
-def _crear_owner(db: Session) -> tuple[int, str]:
-    owner = Usuario(
-        nombre="Owner",
-        apellido_paterno="Prueba",
-        correo=_correo(),
-        contrasena_hash=HASH_SINTETICO,
-        rol=RolUsuario.OWNER.value,
-        correo_verificado=True,
-        debe_cambiar_contrasena=False,
-        esta_activo=True,
-    )
-    db.add(owner)
-    db.flush()
+    if owner_id is None:
+        owner = Usuario(
+            nombre="Owner",
+            apellido_paterno="Prueba",
+            correo=_correo(),
+            contrasena_hash=HASH_SINTETICO,
+            rol=RolUsuario.OWNER.value,
+            correo_verificado=True,
+            debe_cambiar_contrasena=False,
+            esta_activo=True,
+        )
+        db.add(owner)
+        db.flush()
+        owner_id = owner.id
+        db.commit()
+        db.rollback()
     token = f"token-owner-{uuid4().hex}"
     db.add(
         Sesion(
-            usuario_id=owner.id,
+            usuario_id=owner_id,
             token_hash=hash_token_sesion(token),
             expira_en=datetime.now(UTC) + timedelta(hours=1),
         )
     )
-    owner_id = owner.id
     db.commit()
     db.rollback()
     return owner_id, token
@@ -135,8 +115,8 @@ def _cantidad_eventos(db: Session, operador_id: int) -> int:
     cantidad = (
         db.scalar(
             select(func.count())
-            .select_from(EventoOperador)
-            .where(EventoOperador.operador_id == operador_id)
+            .select_from(EventoTiempoReal)
+            .where(EventoTiempoReal.operador_id == operador_id)
         )
         or 0
     )
@@ -147,7 +127,7 @@ def _cantidad_eventos(db: Session, operador_id: int) -> int:
 def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
     db: Session,
 ) -> None:
-    admin_id, token_admin = _crear_admin(db)
+    owner_id, token_owner = _crear_owner(db)
     operador = _crear_operador(db)
     token_operador = f"token-operador-{uuid4().hex}"
     db.add(
@@ -196,26 +176,6 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
     assert lote_operador.eventos[0].datos["cajon_id"] == 1
     assert lote_operador.cursor_escaneado == evento_cajon.id
 
-    lease_admin = admitir_conexion_sse(
-        db,
-        usuario_id=admin_id,
-        token_sesion=token_admin,
-    )
-    lote_admin = consultar_lote_eventos_usuario(
-        db,
-        usuario_id=admin_id,
-        rol_usuario="ADMIN",
-        token_sesion=token_admin,
-        lease_id=lease_admin,
-        cursor=0,
-        revalidar_sesion=True,
-        renovar_conexion=True,
-    )
-    assert [fila.id for fila in lote_admin.eventos] == [evento_cajon.id]
-    assert tipos_autorizados_para_rol("OPERADOR") == {"cajon.actualizado"}
-    assert tipos_autorizados_para_rol("ROL_FALSO") == frozenset()
-    assert tipos_autorizados_para_rol("ADMIN") == {"cajon.actualizado"}
-    owner_id, token_owner = _crear_owner(db)
     lease_owner = admitir_conexion_sse(
         db,
         usuario_id=owner_id,
@@ -231,6 +191,9 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
         revalidar_sesion=True,
         renovar_conexion=True,
     )
+    assert tipos_autorizados_para_rol("OPERADOR") == {"cajon.actualizado"}
+    assert tipos_autorizados_para_rol("ROL_FALSO") == frozenset()
+    assert tipos_autorizados_para_rol("ADMIN") == frozenset()
     assert [fila.id for fila in lote_owner.eventos] == [
         evento.id,
         evento_cajon.id,
@@ -243,7 +206,7 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
 
 
 def test_limite_de_seis_es_independiente_por_cuenta_y_rol(db: Session) -> None:
-    admin_id, token_admin = _crear_admin(db)
+    owner_id, token_owner = _crear_owner(db)
     operador = _crear_operador(db)
     token_operador = f"token-operador-{uuid4().hex}"
     db.add(
@@ -259,8 +222,8 @@ def test_limite_de_seis_es_independiente_por_cuenta_y_rol(db: Session) -> None:
     leases_admin = [
         admitir_conexion_sse(
             db,
-            usuario_id=admin_id,
-            token_sesion=token_admin,
+            usuario_id=owner_id,
+            token_sesion=token_owner,
             ahora=ahora,
         )
         for _ in range(6)
@@ -279,8 +242,8 @@ def test_limite_de_seis_es_independiente_por_cuenta_y_rol(db: Session) -> None:
     with pytest.raises(LimiteConexionesSSEError):
         admitir_conexion_sse(
             db,
-            usuario_id=admin_id,
-            token_sesion=token_admin,
+            usuario_id=owner_id,
+            token_sesion=token_owner,
             ahora=ahora,
         )
     with pytest.raises(LimiteConexionesSSEError):
@@ -306,7 +269,7 @@ def test_evento_y_contador_se_revierten_juntos(db: Session) -> None:
             raise RuntimeError("fallo controlado")
 
     db.rollback()
-    estado = db.get(EstadoEventosOperadores, 1)
+    estado = db.get(EstadoEventosTiempoReal, 1)
     assert estado is not None
     assert estado.ultimo_id == 0
     assert _cantidad_eventos(db, operador.id) == 0
@@ -385,7 +348,7 @@ def test_event_ids_wait_for_the_prior_transaction_commit(db: Session) -> None:
     db.rollback()
     assert [
         evento.id
-        for evento in db.scalars(select(EventoOperador).order_by(EventoOperador.id))
+        for evento in db.scalars(select(EventoTiempoReal).order_by(EventoTiempoReal.id))
     ] == [1, 2]
 
 
@@ -409,14 +372,14 @@ def test_dos_sesiones_owner_leen_replay_independientemente_y_paginan_cien(
         for _ in range(MAXIMO_EVENTOS_POR_LECTURA + 1):
             registrar_evento_operador(db, operador.id, "operador.actualizado")
 
-    lease_a = admitir_conexion_sse_admin(
+    lease_a = admitir_conexion_sse(
         db,
-        admin_usuario_id=owner_a,
+        usuario_id=owner_a,
         token_sesion=token_a,
     )
-    lease_b = admitir_conexion_sse_admin(
+    lease_b = admitir_conexion_sse(
         db,
-        admin_usuario_id=owner_b,
+        usuario_id=owner_b,
         token_sesion=token_b,
     )
 
@@ -467,20 +430,20 @@ def test_resync_cuando_cursor_quedo_fuera_del_historial(db: Session) -> None:
     owner_id, token_owner = _crear_owner(db)
     operador = _crear_operador(db)
     with db.begin():
-        estado = db.get(EstadoEventosOperadores, 1)
+        estado = db.get(EstadoEventosTiempoReal, 1)
         assert estado is not None
         estado.ultimo_id = 4
         db.add(
-            EventoOperador(
+            EventoTiempoReal(
                 id=4,
                 operador_id=operador.id,
                 tipo="operador.actualizado",
             )
         )
 
-    lease_id = admitir_conexion_sse_admin(
+    lease_id = admitir_conexion_sse(
         db,
-        admin_usuario_id=owner_id,
+        usuario_id=owner_id,
         token_sesion=token_owner,
     )
     lote = consultar_lote_eventos_usuario(
@@ -514,17 +477,17 @@ def test_retencion_expira_por_fecha_y_limita_a_diez_mil(db: Session) -> None:
         for identificador in range(1, MAXIMO_EVENTOS_RETENIDOS + 2)
     ]
     with db.begin():
-        estado = db.get(EstadoEventosOperadores, 1)
+        estado = db.get(EstadoEventosTiempoReal, 1)
         assert estado is not None
         estado.ultimo_id = MAXIMO_EVENTOS_RETENIDOS + 1
-        db.execute(insert(EventoOperador), eventos)
+        db.execute(insert(EventoTiempoReal), eventos)
 
     with db.begin():
         nuevo = registrar_evento_operador(db, operador.id, "operador.creado")
         assert nuevo.id == MAXIMO_EVENTOS_RETENIDOS + 2
 
     db.rollback()
-    ids = db.scalars(select(EventoOperador.id).order_by(EventoOperador.id)).all()
+    ids = db.scalars(select(EventoTiempoReal.id).order_by(EventoTiempoReal.id)).all()
     assert len(ids) == MAXIMO_EVENTOS_RETENIDOS
     assert ids[0] == 3
     assert ids[-1] == MAXIMO_EVENTOS_RETENIDOS + 2
@@ -533,82 +496,105 @@ def test_retencion_expira_por_fecha_y_limita_a_diez_mil(db: Session) -> None:
 
 
 def test_limites_de_streams_aperturas_renovacion_y_limpieza(db: Session) -> None:
-    admin_id, token = _crear_admin(db)
+    owner_id, token = _crear_owner(db)
     ahora = datetime.now(UTC)
     leases = [
-        admitir_conexion_sse_admin(
+        admitir_conexion_sse(
             db,
-            admin_usuario_id=admin_id,
+            usuario_id=owner_id,
             token_sesion=token,
             ahora=ahora + timedelta(seconds=indice),
         )
         for indice in range(6)
     ]
     with pytest.raises(LimiteConexionesSSEError) as error:
-        admitir_conexion_sse_admin(
+        admitir_conexion_sse(
             db,
-            admin_usuario_id=admin_id,
+            usuario_id=owner_id,
             token_sesion=token,
             ahora=ahora + timedelta(seconds=4),
         )
     assert error.value.reintentar_en > 0
 
-    cerrar_conexion_sse_admin(
+    cerrar_conexion_sse(
         db,
-        admin_usuario_id=admin_id,
+        usuario_id=owner_id,
         lease_id=leases[0],
         ahora=ahora + timedelta(seconds=4),
     )
-    lease_nuevo = admitir_conexion_sse_admin(
+    lease_nuevo = admitir_conexion_sse(
         db,
-        admin_usuario_id=admin_id,
+        usuario_id=owner_id,
         token_sesion=token,
         ahora=ahora + timedelta(seconds=5),
     )
     assert lease_nuevo not in leases
 
     for lease_id in [*leases[1:], lease_nuevo]:
-        cerrar_conexion_sse_admin(
+        cerrar_conexion_sse(
             db,
-            admin_usuario_id=admin_id,
+            usuario_id=owner_id,
             lease_id=lease_id,
             ahora=ahora + timedelta(seconds=6),
         )
 
-    otro_admin, otro_token = _crear_admin(db)
+    otro_usuario = _crear_operador(db)
+    otro_admin = otro_usuario.id
+    otro_token = f"token-operador-limite-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=otro_admin,
+            token_hash=hash_token_sesion(otro_token),
+            expira_en=ahora + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    db.rollback()
     aperturas = []
     for _ in range(10):
-        lease_id = admitir_conexion_sse_admin(
+        lease_id = admitir_conexion_sse(
             db,
-            admin_usuario_id=otro_admin,
+            usuario_id=otro_admin,
             token_sesion=otro_token,
             ahora=ahora,
         )
         aperturas.append(lease_id)
-        cerrar_conexion_sse_admin(
+        cerrar_conexion_sse(
             db,
-            admin_usuario_id=otro_admin,
+            usuario_id=otro_admin,
             lease_id=lease_id,
             ahora=ahora,
         )
     with pytest.raises(LimiteConexionesSSEError):
-        admitir_conexion_sse_admin(
+        admitir_conexion_sse(
             db,
-            admin_usuario_id=otro_admin,
+            usuario_id=otro_admin,
             token_sesion=otro_token,
             ahora=ahora + timedelta(seconds=1),
         )
 
-    tercero_admin, tercer_token = _crear_admin(db)
-    lease_expirada = admitir_conexion_sse_admin(
+    tercer_usuario = _crear_operador(db)
+    tercero_admin = tercer_usuario.id
+    tercer_token = f"token-operador-vigencia-{uuid4().hex}"
+    db.add(
+        Sesion(
+            usuario_id=tercero_admin,
+            token_hash=hash_token_sesion(tercer_token),
+            expira_en=ahora + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    db.rollback()
+    lease_expirada = admitir_conexion_sse(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
         token_sesion=tercer_token,
         ahora=ahora,
     )
-    resultado = consultar_lote_eventos_sse(
+    resultado = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
+        rol_usuario="OPERADOR",
         token_sesion=tercer_token,
         lease_id=lease_expirada,
         cursor=0,
@@ -618,15 +604,16 @@ def test_limites_de_streams_aperturas_renovacion_y_limpieza(db: Session) -> None
     )
     assert resultado.autorizado is False
 
-    lease_renovable = admitir_conexion_sse_admin(
+    lease_renovable = admitir_conexion_sse(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
         token_sesion=tercer_token,
         ahora=ahora + timedelta(seconds=47),
     )
-    resultado = consultar_lote_eventos_sse(
+    resultado = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
+        rol_usuario="OPERADOR",
         token_sesion=tercer_token,
         lease_id=lease_renovable,
         cursor=0,
@@ -636,19 +623,19 @@ def test_limites_de_streams_aperturas_renovacion_y_limpieza(db: Session) -> None
     )
     assert resultado.autorizado is True
     db.rollback()
-    lease = db.get(ConexionSSEAdmin, lease_renovable)
+    lease = db.get(ConexionSSEUsuario, lease_renovable)
     assert lease is not None
     assert lease.expira_en == ahora + timedelta(seconds=107)
 
-    cerrar_conexion_sse_admin(
+    cerrar_conexion_sse(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
         lease_id=lease_renovable,
         ahora=ahora + timedelta(seconds=63),
     )
-    admitir_conexion_sse_admin(
+    admitir_conexion_sse(
         db,
-        admin_usuario_id=tercero_admin,
+        usuario_id=tercero_admin,
         token_sesion=tercer_token,
         ahora=ahora + timedelta(minutes=7),
     )
@@ -656,8 +643,8 @@ def test_limites_de_streams_aperturas_renovacion_y_limpieza(db: Session) -> None
     assert (
         db.scalar(
             select(func.count())
-            .select_from(ConexionSSEAdmin)
-            .where(ConexionSSEAdmin.admin_usuario_id == tercero_admin)
+            .select_from(ConexionSSEUsuario)
+            .where(ConexionSSEUsuario.usuario_id == tercero_admin)
         )
         == 1
     )
@@ -668,15 +655,15 @@ def test_sesion_o_cuenta_invalida_cierra_la_conexion_en_la_revalidacion(
     db: Session,
     cambio: str,
 ) -> None:
-    admin_id, token = _crear_admin(db)
-    sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == admin_id))
+    owner_id, token = _crear_owner(db)
+    sesion = db.scalar(select(Sesion).where(Sesion.usuario_id == owner_id))
     assert sesion is not None
     ahora = datetime.now(UTC)
-    admin = db.get(Usuario, admin_id)
-    assert admin is not None
-    lease_id = admitir_conexion_sse_admin(
+    owner = db.get(Usuario, owner_id)
+    assert owner is not None
+    lease_id = admitir_conexion_sse(
         db,
-        admin_usuario_id=admin_id,
+        usuario_id=owner_id,
         token_sesion=token,
         ahora=ahora,
     )
@@ -685,15 +672,16 @@ def test_sesion_o_cuenta_invalida_cierra_la_conexion_en_la_revalidacion(
     elif cambio == "expirada":
         sesion.expira_en = ahora + timedelta(seconds=1)
     elif cambio == "inactiva":
-        admin.esta_activo = False
+        owner.esta_activo = False
     else:
-        admin.rol = RolUsuario.OPERADOR.value
+        owner.rol = RolUsuario.OPERADOR.value
     db.commit()
     db.rollback()
 
-    resultado = consultar_lote_eventos_sse(
+    resultado = consultar_lote_eventos_usuario(
         db,
-        admin_usuario_id=admin_id,
+        usuario_id=owner_id,
+        rol_usuario="OWNER",
         token_sesion=token,
         lease_id=lease_id,
         cursor=0,
@@ -703,7 +691,7 @@ def test_sesion_o_cuenta_invalida_cierra_la_conexion_en_la_revalidacion(
     )
     assert resultado.autorizado is False
     db.rollback()
-    lease = db.get(ConexionSSEAdmin, lease_id)
+    lease = db.get(ConexionSSEUsuario, lease_id)
     assert lease is not None
     assert lease.cerrada_en is not None
 
@@ -711,12 +699,12 @@ def test_sesion_o_cuenta_invalida_cierra_la_conexion_en_la_revalidacion(
 def test_admission_concurrente_respeta_el_limite_de_seis_streams(
     db: Session,
 ) -> None:
-    admin_id, token = _crear_admin(db)
+    owner_id, token = _crear_owner(db)
     ahora = datetime.now(UTC)
     for indice in range(5):
-        admitir_conexion_sse_admin(
+        admitir_conexion_sse(
             db,
-            admin_usuario_id=admin_id,
+            usuario_id=owner_id,
             token_sesion=token,
             ahora=ahora + timedelta(seconds=indice),
         )
@@ -736,9 +724,9 @@ def test_admission_concurrente_respeta_el_limite_de_seis_streams(
             ) as otra_db:
                 barrera.wait(timeout=10)
                 try:
-                    admitir_conexion_sse_admin(
+                    admitir_conexion_sse(
                         otra_db,
-                        admin_usuario_id=admin_id,
+                        usuario_id=owner_id,
                         token_sesion=token,
                         ahora=ahora + timedelta(seconds=3),
                     )
@@ -762,11 +750,11 @@ def test_admission_concurrente_respeta_el_limite_de_seis_streams(
     assert (
         db.scalar(
             select(func.count())
-            .select_from(ConexionSSEAdmin)
+            .select_from(ConexionSSEUsuario)
             .where(
-                ConexionSSEAdmin.admin_usuario_id == admin_id,
-                ConexionSSEAdmin.cerrada_en.is_(None),
-                ConexionSSEAdmin.expira_en > ahora,
+                ConexionSSEUsuario.usuario_id == owner_id,
+                ConexionSSEUsuario.cerrada_en.is_(None),
+                ConexionSSEUsuario.expira_en > ahora,
             )
         )
         == 6
@@ -774,20 +762,19 @@ def test_admission_concurrente_respeta_el_limite_de_seis_streams(
 
 
 def test_mutaciones_visibles_emiten_y_reenvio_regeneracion_no(db: Session) -> None:
-    admin_id, _token = _crear_admin(db)
+    owner_id, _token = _crear_owner(db)
     resultado = crear_operador(
         db,
         nombre="Grace",
         apellido_paterno="Hopper",
         apellido_materno="Murray",
         correo=_correo(),
-        creado_por_usuario_id=admin_id,
+        creado_por_usuario_id=owner_id,
         entregar_invitacion=lambda _usuario, _token: None,
         duracion_token_horas=24,
     )
     operador = resultado.usuario
     operador_id = operador.id
-    from app.models import ActivacionCuenta
 
     ahora = datetime.now(UTC)
     assert _cantidad_eventos(db, operador_id) == 1
@@ -842,50 +829,8 @@ def test_mutaciones_visibles_emiten_y_reenvio_regeneracion_no(db: Session) -> No
     assert _cantidad_eventos(db, operador_id) == 4
 
 
-def test_activacion_admin_no_escribe_evento_del_stream_operador(db: Session) -> None:
-    ahora = datetime.now(UTC)
-    admin = Usuario(
-        nombre="Ada",
-        apellido_paterno="Lovelace",
-        apellido_materno="Byron",
-        correo=_correo(),
-        contrasena_hash=None,
-        rol=RolUsuario.ADMIN.value,
-        correo_verificado=False,
-        debe_cambiar_contrasena=False,
-        esta_activo=True,
-    )
-    db.add(admin)
-    db.flush()
-    desafio = f"desafio-admin-sintetico-{uuid4().hex}"
-    db.add(
-        ActivacionCuenta(
-            usuario_id=admin.id,
-            token_hash=hash_token_activacion(f"enlace-admin-sintetico-{uuid4().hex}"),
-            desafio_hash=hash_token_activacion(desafio),
-            desafio_expira_en=ahora + timedelta(hours=1),
-            expira_en=ahora + timedelta(hours=1),
-        )
-    )
-    admin_id = admin.id
-    db.commit()
-    db.rollback()
-
-    completar_activacion_operador(
-        db,
-        token_desafio=desafio,
-        nueva_contrasena="Contrasena sintetica segura 123",
-        ahora=ahora + timedelta(seconds=1),
-    )
-
-    assert _cantidad_eventos(db, admin_id) == 0
-    estado = db.get(EstadoEventosOperadores, 1)
-    assert estado is not None
-    assert estado.ultimo_id == 0
-
-
 def test_error_smtp_y_commit_fallido_no_dejan_eventos(db: Session) -> None:
-    admin_id, _token = _crear_admin(db)
+    owner_id, _token = _crear_owner(db)
     correo_smtp = _correo()
 
     def fallar_invitacion(_usuario: Usuario, _token: str) -> None:
@@ -898,14 +843,14 @@ def test_error_smtp_y_commit_fallido_no_dejan_eventos(db: Session) -> None:
             apellido_paterno="Hopper",
             apellido_materno="Murray",
             correo=correo_smtp,
-            creado_por_usuario_id=admin_id,
+            creado_por_usuario_id=owner_id,
             entregar_invitacion=fallar_invitacion,
             duracion_token_horas=24,
         )
     db.rollback()
     assert db.scalar(select(Usuario.id).where(Usuario.correo == correo_smtp)) is None
     db.rollback()
-    assert db.scalar(select(func.count()).select_from(EventoOperador)) == 0
+    assert db.scalar(select(func.count()).select_from(EventoTiempoReal)) == 0
     db.rollback()
 
     def fallar_commit(_sesion: Session) -> None:
@@ -920,11 +865,11 @@ def test_error_smtp_y_commit_fallido_no_dejan_eventos(db: Session) -> None:
                 apellido_paterno="Hopper",
                 apellido_materno="Murray",
                 correo=_correo(),
-                creado_por_usuario_id=admin_id,
+                creado_por_usuario_id=owner_id,
                 entregar_invitacion=lambda _usuario, _token: None,
                 duracion_token_horas=24,
             )
     finally:
         event.remove(db, "before_commit", fallar_commit)
         db.rollback()
-    assert db.scalar(select(func.count()).select_from(EventoOperador)) == 0
+    assert db.scalar(select(func.count()).select_from(EventoTiempoReal)) == 0

@@ -29,7 +29,7 @@ from app.seguridad.activaciones import hash_token_activacion
 from app.seguridad.contrasenas import crear_hash_contrasena, verificar_contrasena
 from app.seguridad.limitador import MAXIMO_INTENTOS_POR_TOKEN
 from app.seguridad.sesiones import hash_token_sesion
-from app.servicios.autenticacion import autenticar_admin
+from app.servicios.autenticacion import crear_sesion_usuario
 from app.servicios.propietario import (
     COOLDOWN_REENVIO_SEGUNDOS,
     MAXIMO_REENVIO,
@@ -51,6 +51,21 @@ from main import app
 
 RUTA_OWNER = "/api/autenticacion/activacion-propietario"
 NOMBRE_COOKIE_DESAFIO = "smart_parking_owner_activation_challenge"
+
+
+def autenticar_usuario(db: Session, *, correo: str, contrasena: str) -> bool:
+    """Comprueba el acceso con el flujo de sesión compartido por OWNER y OPERADOR."""
+
+    return (
+        crear_sesion_usuario(
+            db,
+            correo=correo,
+            contrasena=contrasena,
+            correo_normalizado=correo.casefold(),
+            duracion_minutos=30,
+        )
+        is not None
+    )
 
 
 class TransporteFalso:
@@ -239,15 +254,18 @@ def test_enlace_verifica_email_y_registra_cuenta_nueva_con_credenciales_separada
     assert usuario.correo_verificado is True
     assert usuario.esta_activo is True
     assert usuario.debe_cambiar_contrasena is False
-    assert " ".join(
-        parte
-        for parte in (
-            usuario.nombre,
-            usuario.apellido_paterno,
-            usuario.apellido_materno,
+    assert (
+        " ".join(
+            parte
+            for parte in (
+                usuario.nombre,
+                usuario.apellido_paterno,
+                usuario.apellido_materno,
+            )
+            if parte
         )
-        if parte
-    ) == "Ada Lovelace Byron"
+        == "Ada Lovelace Byron"
+    )
     assert cuenta is not None and cuenta.usuario_id == usuario.id
     assert cuenta is not None
     assert cuenta.rol_anterior is None
@@ -257,8 +275,8 @@ def test_enlace_verifica_email_y_registra_cuenta_nueva_con_credenciales_separada
     assert cuenta.contrasena_admin_hash is not None
     assert verificar_contrasena(admin, cuenta.contrasena_admin_hash)
     assert not verificar_contrasena(login, cuenta.contrasena_admin_hash)
-    assert autenticar_admin(db, correo=correo, contrasena=login)
-    assert not autenticar_admin(db, correo=correo, contrasena=admin)
+    assert autenticar_usuario(db, correo=correo, contrasena=login)
+    assert not autenticar_usuario(db, correo=correo, contrasena=admin)
     assert obtener_tipo_cuenta_desafio(db, token_desafio=token_desafio) is None
     with pytest.raises(InscripcionPropietarioNoDisponible):
         completar_inscripcion_propietario(
@@ -273,8 +291,8 @@ def test_enlace_verifica_email_y_registra_cuenta_nueva_con_credenciales_separada
         )
 
 
-@pytest.mark.parametrize("rol", [RolUsuario.ADMIN, RolUsuario.OPERADOR])
-def test_no_promueve_cuentas_asignadas_a_admin_u_operador(
+@pytest.mark.parametrize("rol", [RolUsuario.OWNER, RolUsuario.OPERADOR])
+def test_no_promueve_cuentas_asignadas_a_owner_u_operador(
     db: Session,
     rol: RolUsuario,
 ) -> None:
@@ -312,15 +330,18 @@ def test_reinscribe_propietario_roleless_con_nombre_corregido_y_hash_nuevo(
     )
     hash_login = usuario.contrasena_hash
     nombre_previo = "Ada Lovelace Byron"
-    assert " ".join(
-        parte
-        for parte in (
-            usuario.nombre,
-            usuario.apellido_paterno,
-            usuario.apellido_materno,
+    assert (
+        " ".join(
+            parte
+            for parte in (
+                usuario.nombre,
+                usuario.apellido_paterno,
+                usuario.apellido_materno,
+            )
+            if parte
         )
-        if parte
-    ) == nombre_previo
+        == nombre_previo
+    )
     token_sesion = secrets.token_urlsafe(32)
     db.add(
         Sesion(
@@ -387,15 +408,18 @@ def test_reinscribe_propietario_roleless_con_nombre_corregido_y_hash_nuevo(
     assert usuario_actual.correo == correo.casefold()
     assert usuario_actual.rol == RolUsuario.OWNER.value
     assert usuario_actual.contrasena_hash == hash_login
-    assert " ".join(
-        parte
-        for parte in (
-            usuario_actual.nombre,
-            usuario_actual.apellido_paterno,
-            usuario_actual.apellido_materno,
+    assert (
+        " ".join(
+            parte
+            for parte in (
+                usuario_actual.nombre,
+                usuario_actual.apellido_paterno,
+                usuario_actual.apellido_materno,
+            )
+            if parte
         )
-        if parte
-    ) == nombre_corregido
+        == nombre_corregido
+    )
     assert cuenta_actual is not None
     assert cuenta_actual.id == cuenta_id
     assert cuenta_actual.rol_anterior is None
@@ -404,17 +428,21 @@ def test_reinscribe_propietario_roleless_con_nombre_corregido_y_hash_nuevo(
     assert verificar_contrasena(admin_nueva, cuenta_actual.contrasena_admin_hash)
     assert not verificar_contrasena(admin_anterior, cuenta_actual.contrasena_admin_hash)
     assert not verificar_contrasena(login, cuenta_actual.contrasena_admin_hash)
-    assert autenticar_admin(db, correo=correo, contrasena=login)
-    assert not autenticar_admin(db, correo=correo, contrasena=admin_anterior)
-    assert not autenticar_admin(db, correo=correo, contrasena=admin_nueva)
+    assert autenticar_usuario(db, correo=correo, contrasena=login)
+    assert not autenticar_usuario(db, correo=correo, contrasena=admin_anterior)
+    assert not autenticar_usuario(db, correo=correo, contrasena=admin_nueva)
     assert db.scalar(select(func.count(Usuario.id))) == 1
     assert db.scalar(select(func.count(CuentaPropietario.id))) == 1
     assert db.scalar(select(func.count(DesvinculacionPropietario.id))) == 1
-    assert db.scalar(select(func.count(Sesion.id))) == 1
+    assert db.scalar(select(func.count(Sesion.id))) == 2
     sesion = db.scalar(
         select(Sesion).where(Sesion.token_hash == hash_token_sesion(token_sesion))
     )
     assert sesion is not None and sesion.revocado_en is not None
+    assert (
+        db.scalar(select(func.count(Sesion.id)).where(Sesion.revocado_en.is_(None)))
+        == 1
+    )
     assert nombre_previo != nombre_corregido
 
 
@@ -482,15 +510,18 @@ def test_reinscripcion_completa_nombre_de_cuenta_roleless_incompleta(
 
     db.refresh(usuario)
     assert usuario.rol == RolUsuario.OWNER.value
-    assert " ".join(
-        parte
-        for parte in (
-            usuario.nombre,
-            usuario.apellido_paterno,
-            usuario.apellido_materno,
+    assert (
+        " ".join(
+            parte
+            for parte in (
+                usuario.nombre,
+                usuario.apellido_paterno,
+                usuario.apellido_materno,
+            )
+            if parte
         )
-        if parte
-    ) == "Grace Hopper"
+        == "Grace Hopper"
+    )
 
 
 def test_owner_activo_bloquea_nueva_inscripcion_y_retorno(
@@ -549,9 +580,10 @@ def test_rechaza_cuentas_no_elegibles_sin_cambiarlas_ni_enviar_correo(
         "sin_hash": {"con_hash": False, "verificado": False},
     }[estado]
     correo = correo_prueba()
+    rol = RolUsuario.OPERADOR if estado == "sin_hash" else RolUsuario.OWNER
     usuario, _ = crear_usuario_elegible(
         db,
-        RolUsuario.ADMIN,
+        rol,
         correo=correo,
         **atributos,
     )

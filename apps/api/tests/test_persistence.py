@@ -88,7 +88,7 @@ class PersistenceIntegrationTests(unittest.TestCase):
         self.assertFalse(usuario.correo_verificado)
         self.assertTrue(usuario.debe_cambiar_contrasena)
         self.assertTrue(usuario.esta_activo)
-        self.assertEqual(usuario.rol, "ADMIN")
+        self.assertIsNone(usuario.rol)
 
         activacion = ActivacionCuenta(
             usuario_id=usuario.id,
@@ -164,23 +164,11 @@ class PersistenceIntegrationTests(unittest.TestCase):
             esta_activo=True,
         )
         usuario_id: int | None = None
-        admin_pendiente_id: int | None = None
 
         try:
             self.db.add(usuario)
             self.db.commit()
             usuario_id = usuario.id
-
-            admin_pendiente = Usuario(
-                correo=f"sp031-pending-admin-{uuid4().hex}@example.test",
-                contrasena_hash=None,
-                rol=RolUsuario.ADMIN.value,
-                correo_verificado=False,
-                debe_cambiar_contrasena=False,
-            )
-            self.db.add(admin_pendiente)
-            self.db.commit()
-            admin_pendiente_id = admin_pendiente.id
 
             operador_verificado_sin_hash = Usuario(
                 correo=f"sp031-invalid-operator-{uuid4().hex}@example.test",
@@ -215,8 +203,6 @@ class PersistenceIntegrationTests(unittest.TestCase):
             self.db.rollback()
             if usuario_id is not None:
                 self._eliminar_arbol_usuario(usuario_id)
-            if admin_pendiente_id is not None:
-                self._eliminar_arbol_usuario(admin_pendiente_id)
 
     def test_restricciones_y_columnas_sensibles(self) -> None:
         usuario = self._nuevo_usuario()

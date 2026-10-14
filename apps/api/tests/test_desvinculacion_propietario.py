@@ -166,8 +166,7 @@ def extraer_token(mensaje: EmailMessage) -> str:
     enlace = next(
         candidato.rstrip(".,;)]}")
         for candidato in enlaces
-        if urlsplit(candidato.rstrip(".,;)]}")).path
-        == "/confirmar-desvinculacion"
+        if urlsplit(candidato.rstrip(".,;)]}")).path == "/confirmar-desvinculacion"
     )
     partes = urlsplit(enlace)
     assert partes.query == ""
@@ -180,7 +179,7 @@ def test_contrasena_incorrecta_no_envia_correo_y_correcta_permite_confirmar_sin_
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    usuario, cuenta, token_sesion = crear_owner(db, rol_anterior="ADMIN")
+    usuario, cuenta, token_sesion = crear_owner(db, rol_anterior=None)
     credencial_gestion = crear_sesion_gestion(db)
     settings = crear_settings()
     transporte = TransporteCaptura()
@@ -248,15 +247,13 @@ def test_contrasena_incorrecta_no_envia_correo_y_correcta_permite_confirmar_sin_
     cuenta_actual = db.get(CuentaPropietario, cuenta.id)
     assert usuario_actual is not None
     assert cuenta_actual is not None
-    assert usuario_actual.rol == "ADMIN"
+    assert usuario_actual.rol is None
     assert usuario_actual.esta_activo is True
     assert usuario_actual.correo_verificado is True
     assert usuario_actual.contrasena_hash == usuario.contrasena_hash
     assert cuenta_actual.contrasena_admin_hash is None
-    assert cuenta_actual.rol_anterior == "ADMIN"
-    sesiones = db.scalars(
-        select(Sesion).where(Sesion.usuario_id == usuario.id)
-    ).all()
+    assert cuenta_actual.rol_anterior is None
+    sesiones = db.scalars(select(Sesion).where(Sesion.usuario_id == usuario.id)).all()
     assert len(sesiones) == 1
     assert sesiones[0].revocado_en is not None
 
@@ -266,11 +263,14 @@ def test_contrasena_incorrecta_no_envia_correo_y_correcta_permite_confirmar_sin_
         json={"token": token},
     )
     assert replay.status_code == 410
-    assert db.scalar(
-        select(func.count(DesvinculacionPropietario.id)).where(
-            DesvinculacionPropietario.consumida_en.is_not(None)
+    assert (
+        db.scalar(
+            select(func.count(DesvinculacionPropietario.id)).where(
+                DesvinculacionPropietario.consumida_en.is_not(None)
+            )
         )
-    ) == 1
+        == 1
+    )
     assert token not in confirmacion.text
     assert CONTRASENA_ADMIN not in incorrecta.text
 
@@ -294,7 +294,6 @@ def test_contrasena_incorrecta_no_envia_correo_y_correcta_permite_confirmar_sin_
 @pytest.mark.parametrize(
     ("rol_anterior", "rol_esperado"),
     [
-        ("ADMIN", "ADMIN"),
         ("OPERADOR", "OPERADOR"),
         (None, None),
     ],
@@ -446,12 +445,15 @@ def test_fallo_smtp_revierte_solicitud_y_conserva_owner_y_sesiones(
     cuenta_actual = db.get(CuentaPropietario, cuenta.id)
     assert usuario_actual is not None and usuario_actual.rol == "OWNER"
     assert cuenta_actual is not None and cuenta_actual.contrasena_admin_hash is not None
-    assert db.scalar(
-        select(func.count(Sesion.id)).where(
-            Sesion.usuario_id == usuario.id,
-            Sesion.revocado_en.is_(None),
+    assert (
+        db.scalar(
+            select(func.count(Sesion.id)).where(
+                Sesion.usuario_id == usuario.id,
+                Sesion.revocado_en.is_(None),
+            )
         )
-    ) == 1
+        == 1
+    )
 
 
 def test_confirmaciones_concurrentes_aplican_una_sola_transicion(
@@ -486,14 +488,20 @@ def test_confirmaciones_concurrentes_aplican_una_sola_transicion(
 
     assert sum(resultados) == 1
     db.expire_all()
-    assert db.scalar(
-        select(func.count(DesvinculacionPropietario.id)).where(
-            DesvinculacionPropietario.consumida_en.is_not(None)
+    assert (
+        db.scalar(
+            select(func.count(DesvinculacionPropietario.id)).where(
+                DesvinculacionPropietario.consumida_en.is_not(None)
+            )
         )
-    ) == 1
-    assert db.scalar(
-        select(func.count(Usuario.id)).where(
-            Usuario.rol == RolUsuario.OWNER.value,
-            Usuario.esta_activo.is_(True),
+        == 1
+    )
+    assert (
+        db.scalar(
+            select(func.count(Usuario.id)).where(
+                Usuario.rol == RolUsuario.OWNER.value,
+                Usuario.esta_activo.is_(True),
+            )
         )
-    ) == 0
+        == 0
+    )
