@@ -3,13 +3,15 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import inspect
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import (
     CuentaPropietario,
@@ -24,15 +26,63 @@ REVISION_HEAD = "20261013_0001"
 REVISION_PREVIA = "20261011_0004"
 
 
-def ejecutar_alembic(*argumentos: str) -> subprocess.CompletedProcess[str]:
+def ejecutar_alembic(
+    *argumentos: str,
+    entorno: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "alembic", *argumentos],
         cwd=PROJECT_ROOT,
-        env=os.environ.copy(),
+        env=entorno or os.environ.copy(),
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+@pytest.fixture
+def migracion_sin_vision(
+    database_url: URL,
+) -> Generator[tuple[Session, dict[str, str]]]:
+    """Aísla las pruebas de downgrade en el head anterior a Vision."""
+
+    nombre = f"smart_parking_owner_unlink_{uuid4().hex}"
+    url_temporal = database_url.set(database=nombre)
+    motor_admin = create_engine(
+        database_url.set(database="postgres"),
+        isolation_level="AUTOCOMMIT",
+        pool_pre_ping=True,
+    )
+    with motor_admin.connect() as conexion:
+        conexion.execute(text(f'CREATE DATABASE "{nombre}"'))
+
+    entorno = os.environ.copy()
+    entorno["DATABASE_NAME"] = nombre
+    preparacion = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", REVISION_HEAD],
+        cwd=PROJECT_ROOT,
+        env=entorno,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if preparacion.returncode != 0:
+        with motor_admin.connect() as conexion:
+            conexion.execute(text(f'DROP DATABASE IF EXISTS "{nombre}" WITH (FORCE)'))
+        motor_admin.dispose()
+        pytest.fail("No se pudo preparar el esquema anterior a Vision.")
+
+    motor = create_engine(url_temporal, pool_pre_ping=True)
+    session = sessionmaker(bind=motor, autoflush=False, expire_on_commit=False)()
+    try:
+        yield session, entorno
+    finally:
+        session.rollback()
+        session.close()
+        motor.dispose()
+        with motor_admin.connect() as conexion:
+            conexion.execute(text(f'DROP DATABASE IF EXISTS "{nombre}" WITH (FORCE)'))
+        motor_admin.dispose()
 
 
 def crear_usuario(
@@ -96,9 +146,10 @@ def test_migracion_anade_tabla_indices_y_columnas_nullable(db: Session) -> None:
 
 
 def test_downgrade_vacio_es_seguro_y_se_puede_actualizar_de_nuevo(
-    db: Session,
+    migracion_sin_vision: tuple[Session, dict[str, str]],
 ) -> None:
-    bajada = ejecutar_alembic("downgrade", REVISION_PREVIA)
+    db, entorno = migracion_sin_vision
+    bajada = ejecutar_alembic("downgrade", REVISION_PREVIA, entorno=entorno)
     assert bajada.returncode == 0, "El downgrade vacío no terminó correctamente."
 
     inspector = inspect(db.get_bind())
@@ -114,15 +165,16 @@ def test_downgrade_vacio_es_seguro_y_se_puede_actualizar_de_nuevo(
     assert columnas_usuario["rol"]["nullable"] is False
     assert columnas_cuenta["contrasena_admin_hash"]["nullable"] is False
 
-    subida = ejecutar_alembic("upgrade", "head")
+    subida = ejecutar_alembic("upgrade", "head", entorno=entorno)
     assert subida.returncode == 0, "No se pudo volver a aplicar la migración."
 
 
 @pytest.mark.parametrize("estado_inseguro", ["roleless", "hash_null", "historial"])
 def test_downgrade_rechaza_datos_que_no_puede_restaurar(
-    db: Session,
+    migracion_sin_vision: tuple[Session, dict[str, str]],
     estado_inseguro: str,
 ) -> None:
+    db, entorno = migracion_sin_vision
     usuario = crear_usuario(
         db,
         rol=None if estado_inseguro == "roleless" else RolUsuario.OWNER.value,
@@ -152,10 +204,10 @@ def test_downgrade_rechaza_datos_que_no_puede_restaurar(
         )
     db.commit()
 
-    bajada = ejecutar_alembic("downgrade", REVISION_PREVIA)
+    bajada = ejecutar_alembic("downgrade", REVISION_PREVIA, entorno=entorno)
     assert bajada.returncode != 0
     assert "No se puede revertir OWNER unlinking" in bajada.stderr
 
-    estado = ejecutar_alembic("current")
+    estado = ejecutar_alembic("current", entorno=entorno)
     assert estado.returncode == 0
     assert REVISION_HEAD in estado.stdout

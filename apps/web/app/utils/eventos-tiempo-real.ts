@@ -19,6 +19,9 @@ type EstadoEfectivoCajon =
 export type InstantaneaEventoCajon = {
   cajon_id: number
   numero: number
+  vision_zone_id: string
+  activa: boolean
+  vision_desactualizada: boolean
   estado_fisico: EstadoFisicoCajon
   estado_operativo: EstadoOperativoCajon
   motivo_operativo: string | null
@@ -106,6 +109,7 @@ const ESTADOS_EFECTIVOS_CAJON = new Set<EstadoEfectivoCajon>([
   'OCUPADO',
   'NO_DISPONIBLE',
 ])
+const UUID_VISION = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function esCursorDecimal(valor: string): boolean {
   return /^\d+$/.test(valor)
@@ -134,6 +138,9 @@ function analizarInstantaneaCajon(valor: unknown): InstantaneaEventoCajon | null
   const clavesEsperadas = [
     'cajon_id',
     'numero',
+    'vision_zone_id',
+    'activa',
+    'vision_desactualizada',
     'estado_fisico',
     'estado_operativo',
     'motivo_operativo',
@@ -150,6 +157,7 @@ function analizarInstantaneaCajon(valor: unknown): InstantaneaEventoCajon | null
   }
 
   const { cajon_id, numero } = datos
+  const zoneId = datos.vision_zone_id
   const fisico = datos.estado_fisico
   const operativo = datos.estado_operativo
   const motivo = datos.motivo_operativo
@@ -161,6 +169,10 @@ function analizarInstantaneaCajon(valor: unknown): InstantaneaEventoCajon | null
     || typeof numero !== 'number'
     || !Number.isSafeInteger(numero)
     || numero <= 0
+    || typeof zoneId !== 'string'
+    || !UUID_VISION.test(zoneId)
+    || typeof datos.activa !== 'boolean'
+    || typeof datos.vision_desactualizada !== 'boolean'
     || typeof fisico !== 'string'
     || !ESTADOS_FISICOS_CAJON.has(fisico as EstadoFisicoCajon)
     || typeof operativo !== 'string'
@@ -182,6 +194,8 @@ function analizarInstantaneaCajon(valor: unknown): InstantaneaEventoCajon | null
 
   const estadoEfectivoEsperado = operativo !== 'DISPONIBLE'
     ? 'NO_DISPONIBLE'
+    : datos.vision_desactualizada
+      ? 'DESCONOCIDO'
     : fisico === 'OCUPADO'
       ? 'OCUPADO'
       : fisico === 'LIBRE'

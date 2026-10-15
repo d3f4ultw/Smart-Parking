@@ -50,6 +50,9 @@ function crearCajon(
   return {
     id,
     numero,
+    vision_zone_id: `00000000-0000-4000-8000-${String(id).padStart(12, '0')}`,
+    activa: true,
+    vision_desactualizada: false,
     ...estados[estadoEfectivo],
     estado_fisico_actualizado_en: null,
     estado_operativo_actualizado_en: '2026-10-07T12:00:00Z',
@@ -64,6 +67,9 @@ function crearInstantaneaEventoCajon(
   return {
     cajon_id: 41,
     numero: 1,
+    vision_zone_id: '00000000-0000-4000-8000-000000000041',
+    activa: true,
+    vision_desactualizada: false,
     estado_fisico: 'LIBRE',
     estado_operativo: 'DISPONIBLE',
     motivo_operativo: null,
@@ -273,6 +279,7 @@ test('aplicarInstantaneaCajon updates only the stable ID and preserves list-only
   const respuesta = {
     cajones: [cajonObjetivo, cajonNoRelacionado],
     cursor_eventos: '350',
+    vision: { stale: false, last_heartbeat_at: null, last_observation_at: null, stale_after_seconds: 45 },
   }
 
   const resultado = aplicarInstantaneaCajon(
@@ -309,6 +316,7 @@ test('event snapshots drive effective counters for transitions and maintenance p
   const respuesta = {
     cajones: [cajonLibre, cajonMantenimiento, cajonDesconocido],
     cursor_eventos: '351',
+    vision: { stale: false, last_heartbeat_at: null, last_observation_at: null, stale_after_seconds: 45 },
   }
 
   const ocupado = aplicarInstantaneaCajon(
@@ -358,6 +366,7 @@ test('event snapshots drive effective counters for transitions and maintenance p
     crearInstantaneaEventoCajon({
       cajon_id: 12,
       numero: 2,
+      vision_zone_id: '00000000-0000-4000-8000-000000000012',
       estado_fisico: 'LIBRE',
       estado_operativo: 'MANTENIMIENTO',
       motivo_operativo: 'Inspección',
@@ -377,6 +386,7 @@ test('an unknown event ID requests authoritative reconciliation without adding a
   const respuesta = {
     cajones: [crearCajon(41, 1, 'LIBRE')],
     cursor_eventos: '352',
+    vision: { stale: false, last_heartbeat_at: null, last_observation_at: null, stale_after_seconds: 45 },
   }
 
   const resultado = aplicarInstantaneaCajon(

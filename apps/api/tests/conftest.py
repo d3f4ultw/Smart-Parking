@@ -27,6 +27,8 @@ from app.models import (
     Sesion,
     SesionGestionPropietario,
     Usuario,
+    VisionConfiguration,
+    VisionRequest,
 )
 from app.seguridad.limitador import (
     limitador_activaciones,
@@ -136,6 +138,28 @@ def db(database_url: URL) -> Generator[Session]:
         expire_on_commit=False,
     )
     session = session_factory()
+    configuracion = session.get(VisionConfiguration, 1)
+    if configuracion is None:
+        raise RuntimeError("La migracion no creo la configuracion de Vision.")
+    session.execute(delete(Cajon))
+    session.execute(delete(VisionRequest))
+    configuracion.revision = 0
+    configuracion.next_c_number = 2
+    configuracion.current_session_id = None
+    configuracion.last_heartbeat_at = None
+    configuracion.last_observation_at = None
+    configuracion.last_sequence = 0
+    session.add(
+        Cajon(
+            id=1,
+            numero=1,
+            vision_zone_id=uuid4(),
+            poligono=[[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]],
+            activa=True,
+        )
+    )
+    session.commit()
+    session.rollback()
     try:
         yield session
     finally:
@@ -151,14 +175,18 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(HistorialModalidadEstacionamiento))
         session.execute(delete(ConfiguracionEstacionamiento))
         session.execute(delete(Usuario))
-        session.execute(delete(Cajon).where(Cajon.numero > 8))
+        session.execute(delete(Cajon))
+        session.execute(delete(VisionRequest))
         session.execute(
-            update(Cajon).values(
-                estado_fisico="DESCONOCIDO",
-                estado_operativo="DISPONIBLE",
-                motivo_operativo=None,
-                estado_fisico_actualizado_en=None,
-                estado_operativo_actualizado_en=Cajon.creado_en,
+            update(VisionConfiguration)
+            .where(VisionConfiguration.id == 1)
+            .values(
+                revision=0,
+                next_c_number=1,
+                current_session_id=None,
+                last_heartbeat_at=None,
+                last_observation_at=None,
+                last_sequence=0,
             )
         )
         session.execute(

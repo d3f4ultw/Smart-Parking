@@ -2,16 +2,17 @@
 
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    StrictBool,
     field_validator,
     model_validator,
 )
 
+from app.esquemas.vision import EstadoServicioVision
 from app.models.cajon import (
     EstadoEfectivoCajon,
     EstadoFisicoCajon,
@@ -46,14 +47,6 @@ class SolicitudEstadoOperativoCajon(BaseModel):
         return self
 
 
-class SolicitudEstadoFisicoCajon(BaseModel):
-    """Entrada estricta del sensor para reportar ocupacion fisica."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    ocupado: StrictBool
-
-
 class RespuestaCajon(BaseModel):
     """Vista segura de un cajon para personal autorizado."""
 
@@ -61,9 +54,12 @@ class RespuestaCajon(BaseModel):
 
     id: int
     numero: int
+    vision_zone_id: UUID
+    activa: bool
     estado_fisico: EstadoFisicoCajon
     estado_operativo: EstadoOperativoCajon
     motivo_operativo: str | None
+    vision_desactualizada: bool
     estado_fisico_actualizado_en: datetime | None
     estado_operativo_actualizado_en: datetime
     creado_en: datetime
@@ -77,6 +73,7 @@ class RespuestaListaCajones(BaseModel):
 
     cajones: list[RespuestaCajon]
     cursor_eventos: str
+    vision: EstadoServicioVision
 
 
 class RespuestaMutacionCajon(RespuestaCajon):
@@ -85,23 +82,9 @@ class RespuestaMutacionCajon(RespuestaCajon):
     cambio_aplicado: bool
 
 
-class RespuestaEstadoFisicoCajon(BaseModel):
-    """Confirmacion fisica minima y segura para el dispositivo."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    cajon_id: int
-    numero: int
-    estado_fisico: EstadoFisicoCajon
-    estado_fisico_actualizado_en: datetime | None
-    cambio_aplicado: bool
-
-
 __all__ = [
     "RespuestaCajon",
-    "RespuestaEstadoFisicoCajon",
     "RespuestaListaCajones",
     "RespuestaMutacionCajon",
-    "SolicitudEstadoFisicoCajon",
     "SolicitudEstadoOperativoCajon",
 ]

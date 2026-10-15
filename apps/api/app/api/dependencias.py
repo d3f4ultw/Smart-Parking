@@ -16,8 +16,8 @@ from app.servicios.autenticacion import obtener_usuario_por_token
 
 DETALLE_SESION_NO_AUTENTICADA = "No autenticado"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
-_ESQUEMA_BEARER_DISPOSITIVO = HTTPBearer(auto_error=False)
-_FORMATO_TOKEN_DISPOSITIVO = re.compile(r"[A-Za-z0-9_-]{43,}")
+_ESQUEMA_BEARER_VISION = HTTPBearer(auto_error=False)
+_FORMATO_TOKEN_VISION = re.compile(r"[A-Za-z0-9_-]{43,}")
 
 
 def _error_sesion_no_autenticada() -> NoReturn:
@@ -124,7 +124,7 @@ def exigir_owner(
     return usuario_id
 
 
-def _error_dispositivo_no_autenticado() -> NoReturn:
+def _error_vision_no_autenticada() -> NoReturn:
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No autenticado",
@@ -132,22 +132,22 @@ def _error_dispositivo_no_autenticado() -> NoReturn:
     )
 
 
-def exigir_dispositivo(
+def exigir_vision(
     response: Response,
     credenciales: Annotated[
         HTTPAuthorizationCredentials | None,
-        Depends(_ESQUEMA_BEARER_DISPOSITIVO),
+        Depends(_ESQUEMA_BEARER_VISION),
     ],
 ) -> None:
-    """Autoriza solo el bearer configurado para reportes fisicos ESP32."""
+    """Autoriza solo el bearer dedicado a la aplicacion Vision."""
 
     response.headers.update(CABECERA_NO_CACHE)
-    configurado = get_settings().esp32_bearer_token
+    configurado = get_settings().vision_bearer_token
     secreto = configurado.get_secret_value() if configurado is not None else ""
-    if not _FORMATO_TOKEN_DISPOSITIVO.fullmatch(secreto):
+    if not _FORMATO_TOKEN_VISION.fullmatch(secreto):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="La API del dispositivo no esta disponible",
+            detail="La API de Vision no esta disponible",
             headers=CABECERA_NO_CACHE,
         )
 
@@ -157,11 +157,11 @@ def exigir_dispositivo(
         or not credenciales.credentials.isascii()
         or not secrets.compare_digest(credenciales.credentials, secreto)
     ):
-        _error_dispositivo_no_autenticado()
+        _error_vision_no_autenticada()
 
 
 __all__ = [
-    "exigir_dispositivo",
+    "exigir_vision",
     "exigir_operador",
     "exigir_owner",
     "exigir_personal",

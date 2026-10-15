@@ -24,6 +24,7 @@ from app.api.rutas import (
     eventos_tiempo_real_router,
     gestion_propietario_router,
     operadores_router,
+    vision_router,
 )
 from app.api.rutas.eventos import cerrar_leases_sse_activas
 from app.core.config import get_settings
@@ -59,6 +60,7 @@ app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
+app.include_router(vision_router)
 app.include_router(operadores_router)
 app.include_router(activaciones_operador_router)
 app.include_router(activaciones_propietario_router)

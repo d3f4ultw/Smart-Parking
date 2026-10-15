@@ -1,3 +1,2 @@
 SSID: str
 PASSWORD: str
-ESP32_BEARER_TOKEN: str

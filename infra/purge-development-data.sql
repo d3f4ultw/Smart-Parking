@@ -1,13 +1,9 @@
--- Remove development accounts and operational history while retaining cajones.
+-- Remove development accounts and operational history while retaining dynamic cajones.
 -- This script is intentionally limited to the isolated sandbox and dev database.
 DO $$
 BEGIN
     IF current_database() NOT IN ('smart_parking_sandbox', 'smart_parking_dev') THEN
         RAISE EXCEPTION 'Refusing to purge database %.', current_database();
-    END IF;
-
-    IF (SELECT count(*) FROM public.cajones) <> 8 THEN
-        RAISE EXCEPTION 'Expected exactly eight parking slots before purge.';
     END IF;
 
     TRUNCATE TABLE
@@ -16,8 +12,6 @@ BEGIN
         public.configuracion_estacionamiento,
         public.cuentas_propietario,
         public.desvinculaciones_propietario,
-        public.estado_eventos_tiempo_real,
-        public.eventos_tiempo_real,
         public.historial_modalidad_estacionamiento,
         public.inscripciones_propietario,
         public.sesiones,
@@ -25,10 +19,15 @@ BEGIN
         public.usuarios
     RESTART IDENTITY;
 
-    IF (SELECT count(*) FROM public.cajones) <> 8 THEN
-        RAISE EXCEPTION 'Parking slot count changed during purge.';
-    END IF;
+    DELETE FROM public.eventos_tiempo_real;
+    DELETE FROM public.vision_requests;
+    UPDATE public.vision_configuration
+    SET current_session_id = NULL,
+        last_heartbeat_at = NULL,
+        last_observation_at = NULL,
+        last_sequence = 0
+    WHERE id = 1;
 
-    RAISE NOTICE 'Development data purged; all eight parking slots remain.';
+    RAISE NOTICE 'Development data purged; dynamic parking configuration and global SSE cursor remain.';
 END;
 $$;

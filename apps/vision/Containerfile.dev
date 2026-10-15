@@ -1,0 +1,13 @@
+FROM python:3.14.7-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    VISION_STATE_PATH=/var/lib/smart-parking-vision
+
+WORKDIR /app/vision
+
+RUN python -m pip install --no-cache-dir numpy==2.3.4
+
+COPY apps/vision/smart_parking_client.py apps/vision/temporal_validation.py ./
+
+ENTRYPOINT ["python", "smart_parking_client.py"]

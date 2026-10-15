@@ -111,6 +111,9 @@ function datosEventoCajon(overrides: Record<string, unknown> = {}): string {
     datos: {
       cajon_id: 3,
       numero: 1,
+      vision_zone_id: '00000000-0000-4000-8000-000000000003',
+      activa: true,
+      vision_desactualizada: false,
       estado_fisico: 'OCUPADO',
       estado_operativo: 'DISPONIBLE',
       motivo_operativo: null,
@@ -126,10 +129,19 @@ function datosEventoCajon(overrides: Record<string, unknown> = {}): string {
 function listaCajonesPrueba(cursor: string): RespuestaListaCajones {
   return {
     cursor_eventos: cursor,
+    vision: {
+      stale: false,
+      last_heartbeat_at: null,
+      last_observation_at: null,
+      stale_after_seconds: 45,
+    },
     cajones: [
       {
         id: 3,
         numero: 1,
+        vision_zone_id: '00000000-0000-4000-8000-000000000003',
+        activa: true,
+        vision_desactualizada: false,
         estado_fisico: 'LIBRE',
         estado_operativo: 'DISPONIBLE',
         motivo_operativo: null,
@@ -141,6 +153,9 @@ function listaCajonesPrueba(cursor: string): RespuestaListaCajones {
       {
         id: 9,
         numero: 8,
+        vision_zone_id: '00000000-0000-4000-8000-000000000009',
+        activa: true,
+        vision_desactualizada: true,
         estado_fisico: 'DESCONOCIDO',
         estado_operativo: 'DISPONIBLE',
         motivo_operativo: null,

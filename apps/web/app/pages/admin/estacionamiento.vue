@@ -135,6 +135,7 @@ const etiquetaConexion = computed(() => {
 })
 let suscripcionCajones: { detener: () => void } | null = null
 let recuperacionEnCurso = false
+let temporizadorVision: ReturnType<typeof setInterval> | null = null
 
 function detenerSuscripcionCajones() {
   suscripcionCajones?.detener()
@@ -440,8 +441,21 @@ if (
   await atenderSesionPerdida()
 }
 
-onMounted(() => suscribirCajones())
-onBeforeUnmount(detenerSuscripcionCajones)
+onMounted(() => {
+  suscribirCajones()
+  temporizadorVision = window.setInterval(() => {
+    if (document.visibilityState === 'visible') {
+      void actualizarCajones()
+    }
+  }, 15_000)
+})
+onBeforeUnmount(() => {
+  detenerSuscripcionCajones()
+  if (temporizadorVision !== null) {
+    window.clearInterval(temporizadorVision)
+    temporizadorVision = null
+  }
+})
 </script>
 
 <template>
@@ -450,7 +464,7 @@ onBeforeUnmount(detenerSuscripcionCajones)
       <div>
         <p class="eyebrow">Smart Parking · Administración</p>
         <h1 id="parking-title">Estacionamiento</h1>
-        <p class="heading-copy">Monitoreo y administración de lugares de estacionamiento.</p>
+        <p class="heading-copy">Monitoreo de cajones creados por Vision.</p>
       </div>
       <button
         v-if="cajonesConfirmados !== null"
@@ -468,6 +482,15 @@ onBeforeUnmount(detenerSuscripcionCajones)
         </svg>
       </button>
     </header>
+
+    <p
+      v-if="cajonesConfirmados?.vision.stale"
+      class="vision-stale-notice"
+      role="status"
+      aria-live="polite"
+    >
+      Vision no ha confirmado detecciones recientes. Los estados fisicos se muestran como desconocidos.
+    </p>
 
     <p v-if="mensajeGestion" class="management-feedback" role="status" aria-live="polite">
       {{ mensajeGestion }}
@@ -586,11 +609,11 @@ onBeforeUnmount(detenerSuscripcionCajones)
 
       <section v-if="cajonesOrdenados.length === 0" class="empty-state">
         <span class="empty-mark" aria-hidden="true">P</span>
-        <h2>No hay lugares registrados</h2>
-        <p>Cuando se registren lugares de estacionamiento, aparecerán aquí con su estado actual.</p>
+        <h2>No hay cajones activos</h2>
+        <p>Las zonas creadas por Vision aparecerán aquí cuando se guarde la calibración.</p>
       </section>
 
-      <section v-else class="parking-grid" aria-label="Lugares de estacionamiento">
+      <section v-else class="parking-grid" aria-label="Cajones activos">
         <article
           v-for="cajon in cajonesOrdenados"
           :key="cajon.id"
@@ -598,7 +621,7 @@ onBeforeUnmount(detenerSuscripcionCajones)
           :aria-busy="mostrandoSkeletonActualizacion"
         >
           <header class="card-heading">
-            <h2>Lugar {{ cajon.numero }}</h2>
+            <h2>C{{ cajon.numero }}</h2>
             <span
               class="effective-state"
               :data-effective-state="cajon.estado_efectivo"
@@ -661,7 +684,7 @@ onBeforeUnmount(detenerSuscripcionCajones)
             class="manage-button"
             type="button"
             :disabled="mutacionEnCurso || mutacionPendiente || reconciliando"
-            :aria-label="`Administrar el lugar ${cajon.numero}`"
+            :aria-label="`Administrar el cajón C${cajon.numero}`"
             @click="abrirGestionCajon(cajon.id)"
           >
             Administrar
@@ -690,6 +713,15 @@ onBeforeUnmount(detenerSuscripcionCajones)
 .parking-page {
   min-width: 0;
   container-type: inline-size;
+}
+
+.vision-stale-notice {
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+  border: 1px solid #dfaa58;
+  border-radius: 0.75rem;
+  background: #fff7e8;
+  color: #513b1d;
 }
 
 .page-heading {

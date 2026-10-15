@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
+from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     DateTime,
     Identity,
     Integer,
     String,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -52,6 +56,11 @@ class Cajon(Base):
     __table_args__ = (
         CheckConstraint("numero > 0", name="ck_cajones_numero_positivo"),
         UniqueConstraint("numero", name="uq_cajones_numero"),
+        UniqueConstraint("vision_zone_id", name="uq_cajones_vision_zone_id"),
+        CheckConstraint(
+            "NOT activa OR poligono IS NOT NULL",
+            name="ck_cajones_activos_con_poligono",
+        ),
         CheckConstraint(
             "estado_fisico IN ('DESCONOCIDO', 'LIBRE', 'OCUPADO')",
             name="ck_cajones_estado_fisico",
@@ -70,7 +79,14 @@ class Cajon(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
-    numero: Mapped[int] = mapped_column(Integer, nullable=False)
+    numero: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    vision_zone_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    poligono: Mapped[list[list[float]]] = mapped_column(JSONB, nullable=False)
+    activa: Mapped[bool] = mapped_column(
+        default=True,
+        nullable=False,
+        server_default=text("true"),
+    )
     estado_fisico: Mapped[str] = mapped_column(
         String(16),
         nullable=False,

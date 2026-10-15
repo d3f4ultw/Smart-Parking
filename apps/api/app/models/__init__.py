@@ -20,6 +20,7 @@ from app.models.inscripcion_propietario import InscripcionPropietario
 from app.models.sesion import Sesion
 from app.models.sesion_gestion_propietario import SesionGestionPropietario
 from app.models.usuario import RolUsuario, Usuario
+from app.models.vision_configuration import VisionConfiguration, VisionRequest
 
 __all__ = [
     "ActivacionCuenta",
@@ -39,4 +40,6 @@ __all__ = [
     "Sesion",
     "SesionGestionPropietario",
     "Usuario",
+    "VisionConfiguration",
+    "VisionRequest",
 ]

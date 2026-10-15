@@ -29,9 +29,9 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="SMTP_PASSWORD",
     )
-    esp32_bearer_token: SecretStr | None = Field(
+    vision_bearer_token: SecretStr | None = Field(
         default=None,
-        validation_alias="ESP32_BEARER_TOKEN",
+        validation_alias="VISION_BEARER_TOKEN",
     )
     smtp_from_email: str | None = Field(
         default=None,

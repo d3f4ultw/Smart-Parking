@@ -18,6 +18,9 @@ export type CursorEventos = string
 export interface Cajon {
   id: number
   numero: number
+  vision_zone_id: string
+  activa: boolean
+  vision_desactualizada: boolean
   estado_fisico: EstadoFisicoCajon
   estado_operativo: EstadoOperativoCajon
   motivo_operativo: string | null
@@ -43,6 +46,12 @@ export type ResultadoSolicitudEstadoOperativo =
 export interface RespuestaListaCajones {
   cajones: Cajon[]
   cursor_eventos: CursorEventos
+  vision: {
+    stale: boolean
+    last_heartbeat_at: string | null
+    last_observation_at: string | null
+    stale_after_seconds: number
+  }
 }
 
 export type ResultadoAplicacionInstantaneaCajon =
@@ -154,6 +163,10 @@ export function esRespuestaMutacionCajon(
   const respuesta = valor as Record<string, unknown>
   return respuesta.id === cajonId
     && typeof respuesta.numero === 'number'
+    && typeof respuesta.vision_zone_id === 'string'
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(respuesta.vision_zone_id)
+    && typeof respuesta.activa === 'boolean'
+    && typeof respuesta.vision_desactualizada === 'boolean'
     && ['DESCONOCIDO', 'LIBRE', 'OCUPADO'].includes(String(respuesta.estado_fisico))
     && ['DISPONIBLE', 'MANTENIMIENTO', 'FUERA_DE_SERVICIO'].includes(String(respuesta.estado_operativo))
     && (respuesta.motivo_operativo === null || typeof respuesta.motivo_operativo === 'string')
@@ -175,14 +188,23 @@ export function aplicarInstantaneaCajon(
     return { tipo: 'cajon-desconocido', respuesta }
   }
 
+  const cajonActual = respuesta.cajones.find(
+    (cajon) => cajon.id === instantanea.cajon_id,
+  )
+  if (cajonActual === undefined || cajonActual.vision_zone_id !== instantanea.vision_zone_id) {
+    return { tipo: 'cajon-desconocido', respuesta }
+  }
+
   return {
     tipo: 'aplicada',
     respuesta: {
       ...respuesta,
-      cajones: respuesta.cajones.map((cajon) => cajon.id === instantanea.cajon_id
-        ? {
+      cajones: instantanea.activa
+        ? respuesta.cajones.map((cajon) => cajon.id === instantanea.cajon_id
+          ? {
             ...cajon,
             numero: instantanea.numero,
+            vision_desactualizada: instantanea.vision_desactualizada,
             estado_fisico: instantanea.estado_fisico,
             estado_operativo: instantanea.estado_operativo,
             motivo_operativo: instantanea.motivo_operativo,
@@ -190,7 +212,8 @@ export function aplicarInstantaneaCajon(
             estado_fisico_actualizado_en: instantanea.estado_fisico_actualizado_en,
             estado_operativo_actualizado_en: instantanea.estado_operativo_actualizado_en,
           }
-        : cajon),
+          : cajon)
+        : respuesta.cajones.filter((cajon) => cajon.id !== instantanea.cajon_id),
     },
   }
 }
