@@ -60,7 +60,7 @@ services:
       ACTIVACION_REENVIO_COOLDOWN_SEGUNDOS: "${ACTIVACION_REENVIO_COOLDOWN_SEGUNDOS:-60}"
       ACTIVATION_TOKEN_TTL_HOURS: "${ACTIVATION_TOKEN_TTL_HOURS:?Set ACTIVATION_TOKEN_TTL_HOURS in the root .env}"
       ACTIVATION_CHALLENGE_TTL_MINUTES: "${ACTIVATION_CHALLENGE_TTL_MINUTES:?Set ACTIVATION_CHALLENGE_TTL_MINUTES in the root .env}"
-      ESP32_BEARER_TOKEN: "${ESP32_BEARER_TOKEN:-}"
+      VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:-}"
       CORREO_TRANSPORTE: "${CORREO_TRANSPORTE:-smtp}"
       SMTP_HOST: "${SMTP_HOST:-mailpit}"
       SMTP_PORT: "${SMTP_PORT:-1025}"
@@ -81,6 +81,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+
+  vision-dev:
+    profiles: ["vision"]
+    container_name: vision-dev
+    build:
+      context: .
+      dockerfile: apps/vision/Containerfile.dev
+    command: ["serve", "--api-url", "http://api-dev:8000"]
+    environment:
+      VISION_API_BASE_URL: "http://api-dev:8000"
+      VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:-}"
+      VISION_STATE_PATH: /var/lib/smart-parking-vision
+    volumes:
+      - vision_state:/var/lib/smart-parking-vision
+    networks:
+      - development
+    depends_on:
+      - api-dev
 
   postgres:
     container_name: postgres
@@ -114,3 +132,5 @@ volumes:
     name: web_node_modules
   web_nuxt:
     name: web_nuxt
+  vision_state:
+    name: smart-parking-vision-state

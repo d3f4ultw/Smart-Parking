@@ -44,6 +44,7 @@ from app.api.rutas.operadores import (
 from app.api.rutas.operadores import (
     router as operadores_router,
 )
+from app.api.rutas.vision import router as vision_router
 
 __all__ = [
     "RUTA_LOGIN",
@@ -64,4 +65,5 @@ __all__ = [
     "eventos_tiempo_real_router",
     "gestion_propietario_router",
     "operadores_router",
+    "vision_router",
 ]

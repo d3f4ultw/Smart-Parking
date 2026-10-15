@@ -9,25 +9,22 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencias import (
     CABECERA_NO_CACHE,
-    exigir_dispositivo,
     exigir_personal,
 )
 from app.core.database import get_db
 from app.esquemas.cajones import (
     RespuestaCajon,
-    RespuestaEstadoFisicoCajon,
     RespuestaListaCajones,
     RespuestaMutacionCajon,
-    SolicitudEstadoFisicoCajon,
     SolicitudEstadoOperativoCajon,
 )
 from app.servicios.cajones import (
     CajonNoEncontradoError,
-    cambiar_estado_fisico,
     cambiar_estado_operativo,
     listar_cajones,
 )
 from app.servicios.eventos_operadores import obtener_marca_eventos
+from app.servicios.vision import obtener_estado_vision
 
 RUTA_CAJONES = "/api/cajones"
 router = APIRouter(prefix=RUTA_CAJONES, tags=["cajones"])
@@ -60,13 +57,15 @@ def listar_cajones_endpoint(
     response.headers.update(CABECERA_NO_CACHE)
     try:
         marca_eventos, _primer_evento = obtener_marca_eventos(db)
-        cajones = listar_cajones(db)
+        vision = obtener_estado_vision(db)
+        cajones = listar_cajones(db, vision_desactualizada=vision["stale"])
     except SQLAlchemyError:
         db.rollback()
         _error_interno()
     return RespuestaListaCajones(
         cajones=[RespuestaCajon.model_validate(cajon) for cajon in cajones],
         cursor_eventos=str(marca_eventos),
+        vision=vision,
     )
 
 
@@ -98,41 +97,6 @@ def actualizar_estado_operativo_endpoint(
         _error_interno()
     return RespuestaMutacionCajon(
         **asdict(resultado.cajon),
-        cambio_aplicado=resultado.cambio_aplicado,
-    )
-
-
-@router.put(
-    "/{cajon_id}/estado-fisico",
-    response_model=RespuestaEstadoFisicoCajon,
-)
-def actualizar_estado_fisico_endpoint(
-    cajon_id: Annotated[int, Path(ge=1)],
-    solicitud: SolicitudEstadoFisicoCajon,
-    response: Response,
-    _dispositivo: Annotated[None, Depends(exigir_dispositivo)],
-    db: Annotated[Session, Depends(get_db)],
-) -> RespuestaEstadoFisicoCajon:
-    """Aplica el reporte fisico usando solo el bearer dedicado."""
-
-    response.headers.update(CABECERA_NO_CACHE)
-    try:
-        resultado = cambiar_estado_fisico(
-            db,
-            cajon_id,
-            ocupado=solicitud.ocupado,
-        )
-    except CajonNoEncontradoError:
-        _error_no_encontrado()
-    except SQLAlchemyError:
-        db.rollback()
-        _error_interno()
-
-    return RespuestaEstadoFisicoCajon(
-        cajon_id=resultado.cajon.id,
-        numero=resultado.cajon.numero,
-        estado_fisico=resultado.cajon.estado_fisico,
-        estado_fisico_actualizado_en=(resultado.cajon.estado_fisico_actualizado_en),
         cambio_aplicado=resultado.cambio_aplicado,
     )
 
