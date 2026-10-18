@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictFloat,
     StrictInt,
+    StrictStr,
     field_validator,
     model_validator,
 )
@@ -37,7 +41,7 @@ class ZonaVision(BaseModel):
 
     vision_zone_id: UUID
     numero: StrictInt | None = Field(default=None, ge=1)
-    polygon: Annotated[list[Coordenada], Field(min_length=3, max_length=128)]
+    polygon: Annotated[list[Coordenada], Field(min_length=4, max_length=128)]
 
     @field_validator("polygon", mode="before")
     @classmethod
@@ -133,16 +137,104 @@ class EstadoServicioVision(BaseModel):
     stale_after_seconds: int
 
 
+class SolicitudAutorizacionVision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contrasena_admin: Annotated[StrictStr, Field(min_length=1, max_length=128)]
+
+
+class RespuestaAutorizacionVision(BaseModel):
+    authorized: bool
+
+
+class EstadoZonaRuntimeVision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    numero: StrictInt = Field(ge=1)
+    estado: Annotated[
+        StrictStr,
+        Field(pattern=r"^(DESCONOCIDO|LIBRE|CANDIDATO_OCUPADO|OCUPADO)$"),
+    ]
+
+
+class SolicitudEstadoRuntimeVision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: UUID
+    revision: StrictInt = Field(ge=0)
+    sequence: StrictInt = Field(ge=1)
+    mode: Annotated[StrictStr, Field(pattern=r"^(simulation|camera)$")]
+    source_connected: StrictBool
+    processing: StrictBool
+    source_fps: Annotated[StrictFloat, Field(ge=0, le=120)] = 0.0
+    inference_fps: Annotated[StrictFloat, Field(ge=0, le=120)] = 0.0
+    zone_states: list[EstadoZonaRuntimeVision] = Field(
+        default_factory=list, max_length=256
+    )
+    error_code: Annotated[
+        StrictStr | None,
+        Field(
+            pattern=r"^(SOURCE_UNAVAILABLE|MODEL_UNAVAILABLE|API_UNAVAILABLE|FRAME_INVALID)$"
+        ),
+    ] = None
+
+
+class EstadoVisualizadorMonitoreoVision(BaseModel):
+    diagnostic_id: Annotated[StrictStr, Field(pattern=r"^[0-9a-f]{32}$")]
+    stream_type: Literal["raw", "annotated"]
+    reserved_at: datetime
+    connection_age_seconds: Annotated[StrictFloat, Field(ge=0)]
+    last_emitted_sequence: StrictInt | None = Field(default=None, ge=1)
+    last_emitted_at: datetime | None = None
+    jpeg_parts_emitted: StrictInt = Field(ge=0)
+    jpeg_bytes_emitted: StrictInt = Field(ge=0)
+    released_at: datetime | None = None
+    release_reason: StrictStr | None = Field(default=None, max_length=64)
+
+
+class RespuestaEstadoMonitoreoVision(BaseModel):
+    mode: str
+    source_connected: bool
+    processing: bool
+    source_fps: float = 0.0
+    inference_fps: float = 0.0
+    zone_states: list[EstadoZonaRuntimeVision] = Field(default_factory=list)
+    source_sequence: int = 0
+    annotated_sequence: int = 0
+    configuration_revision: int = Field(ge=0)
+    applied_revision: int | None = Field(default=None, ge=0)
+    active_viewers: int = Field(default=0, ge=0)
+    active_viewer_details: list[EstadoVisualizadorMonitoreoVision] = Field(
+        default_factory=list, max_length=4
+    )
+    recent_viewer_releases: list[EstadoVisualizadorMonitoreoVision] = Field(
+        default_factory=list, max_length=32
+    )
+    frame_fresh: bool
+    annotated_frame_fresh: bool
+    frame_age_seconds: float | None
+    annotated_frame_age_seconds: float | None
+    last_frame_at: datetime | None
+    last_annotated_frame_at: datetime | None
+    error_code: str | None
+    zones_count: int
+
+
 __all__ = [
     "EstadoServicioVision",
     "EstadoVision",
+    "RespuestaAutorizacionVision",
+    "RespuestaEstadoMonitoreoVision",
+    "EstadoVisualizadorMonitoreoVision",
     "ObservacionVision",
     "RespuestaAceptacionVision",
     "RespuestaConfiguracionVision",
     "RespuestaSesionVision",
     "RespuestaZonaVision",
     "SolicitudConfiguracionVision",
+    "SolicitudAutorizacionVision",
     "SolicitudObservacionesVision",
     "SolicitudSecuenciaVision",
+    "SolicitudEstadoRuntimeVision",
     "ZonaVision",
 ]

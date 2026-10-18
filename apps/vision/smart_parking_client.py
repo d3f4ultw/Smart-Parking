@@ -100,6 +100,93 @@ class SmartParkingClient:
             raise VisionAPIError(None)
         return valor
 
+    def _request_frame(
+        self,
+        tipo: str,
+        session_id: UUID,
+        revision: int,
+        sequence: int,
+        jpeg: bytes,
+    ) -> None:
+        """Envía un JPEG acotado sin incluir su contenido en errores o logs."""
+
+        if tipo not in {"raw", "annotated"} or not 4 <= len(jpeg) <= 1_048_576:
+            raise ValueError("El frame JPEG no cumple el limite permitido.")
+        peticion = Request(
+            f"{self.api_url}/api/vision/frames/{tipo}",
+            data=jpeg,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Accept": "application/json",
+                "Content-Type": "image/jpeg",
+                "X-Vision-Session": str(session_id),
+                "X-Vision-Revision": str(revision),
+                "X-Vision-Sequence": str(sequence),
+            },
+        )
+        try:
+            with urlopen(peticion, timeout=self.timeout) as respuesta:
+                valor = json.loads(respuesta.read(1024).decode("utf-8"))
+        except HTTPError as error:
+            raise VisionAPIError(error.code) from None
+        except (URLError, TimeoutError, OSError, json.JSONDecodeError, UnicodeDecodeError):
+            raise VisionAPIError(None) from None
+        if not isinstance(valor, dict) or valor.get("accepted") is not True:
+            raise VisionAPIError(None)
+
+    def publicar_frame(
+        self,
+        tipo: str,
+        session_id: UUID,
+        revision: int,
+        sequence: int,
+        jpeg: bytes,
+    ) -> None:
+        """Publica el frame más reciente de una sesión Vision vigente."""
+
+        if sequence < 1:
+            raise ValueError("La secuencia del frame debe ser positiva.")
+        self._request_frame(tipo, session_id, revision, sequence, jpeg)
+
+    def publicar_estado_runtime(
+        self,
+        *,
+        session_id: UUID,
+        revision: int,
+        sequence: int,
+        mode: str,
+        source_connected: bool,
+        processing: bool,
+        error_code: str | None,
+        source_fps: float = 0.0,
+        inference_fps: float = 0.0,
+        zone_states: tuple[ZoneSnapshot, ...] = (),
+    ) -> None:
+        """Envía un estado acotado sin datos del origen ni excepciones."""
+
+        valor = self._request(
+            "POST",
+            "/api/vision/runtime-status",
+            {
+                "session_id": str(session_id),
+                "revision": revision,
+                "sequence": sequence,
+                "mode": mode,
+                "source_connected": source_connected,
+                "processing": processing,
+                "error_code": error_code,
+                "source_fps": source_fps,
+                "inference_fps": inference_fps,
+                "zone_states": [
+                    {"numero": int(snapshot.identifier.removeprefix("C")), "estado": snapshot.state.value}
+                    for snapshot in zone_states
+                ],
+            },
+        )
+        if valor.get("accepted") is not True:
+            raise VisionAPIError(None)
+
     def cargar_configuracion(self) -> ConfiguracionRemota:
         valor = self._request("GET", "/api/vision/configuration")
         try:
@@ -186,7 +273,6 @@ class SmartParkingClient:
         self.configuracion = configuracion
         self._pending_request_id = None
         self._pending_digest = None
-        self.session_id = None
         self._guardar_cache(configuracion)
         return configuracion
 

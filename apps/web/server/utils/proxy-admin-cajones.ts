@@ -9,12 +9,11 @@ import {
   type H3Event,
 } from 'h3'
 
-const NOMBRE_COOKIE_SESION = 'smart_parking_session'
-
 export function proxyAdminCajones(event: H3Event) {
   const config = useRuntimeConfig(event)
   const apiBaseUrl = config.apiInternalBaseUrl.replace(/\/+$/, '')
-  const cookieSesion = getCookie(event, NOMBRE_COOKIE_SESION)
+  const nombreCookieSesion = config.sessionCookieName
+  const cookieSesion = getCookie(event, nombreCookieSesion)
 
   setResponseHeader(event, 'cache-control', 'no-store')
 
@@ -23,7 +22,7 @@ export function proxyAdminCajones(event: H3Event) {
       method: 'GET',
       headers: cookieSesion === undefined
         ? undefined
-        : { cookie: NOMBRE_COOKIE_SESION + '=' + cookieSesion },
+        : { cookie: nombreCookieSesion + '=' + cookieSesion },
     },
   })
 }
@@ -79,7 +78,8 @@ function validarSolicitudOperativa(valor: unknown): SolicitudOperativaValidada |
 export async function proxyCambiarEstadoOperativoCajon(event: H3Event) {
   const config = useRuntimeConfig(event)
   const apiBaseUrl = config.apiInternalBaseUrl.replace(/\/+$/, '')
-  const cookieSesion = getCookie(event, NOMBRE_COOKIE_SESION)
+  const nombreCookieSesion = config.sessionCookieName
+  const cookieSesion = getCookie(event, nombreCookieSesion)
 
   setResponseHeader(event, 'cache-control', 'no-store')
 
@@ -102,7 +102,7 @@ export async function proxyCambiarEstadoOperativoCajon(event: H3Event) {
     'content-type': 'application/json',
   }
   if (cookieSesion !== undefined) {
-    headers.cookie = NOMBRE_COOKIE_SESION + '=' + cookieSesion
+    headers.cookie = nombreCookieSesion + '=' + cookieSesion
   }
 
   return sendProxy(

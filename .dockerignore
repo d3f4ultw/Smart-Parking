@@ -1,0 +1,45 @@
+# Credentials and local environment configuration
+**/.env
+**/.env.*
+**/*.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.credentials
+**/*.token
+**/*.dump
+**/*.backup
+**/*.sqlite
+**/*.sqlite3
+**/*.db
+
+# Repository metadata and local tooling
+.git
+.codegraph/
+.agents/
+AGENTS.md
+**/AGENTS.md
+
+# Dependencies and generated caches
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/.pyright/
+**/.uv_cache/
+apps/web/.nuxt/
+apps/web/.output/
+apps/web/.nitro/
+apps/web/.data/
+apps/web/.cache/
+apps/web/dist/
+**/*.tsbuildinfo
+
+# Local reports and Vision model weights
+/reports/
+**/reports/
+apps/vision/models/

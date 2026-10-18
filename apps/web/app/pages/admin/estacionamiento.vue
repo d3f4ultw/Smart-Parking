@@ -135,7 +135,7 @@ const etiquetaConexion = computed(() => {
 })
 let suscripcionCajones: { detener: () => void } | null = null
 let recuperacionEnCurso = false
-let temporizadorVision: ReturnType<typeof setInterval> | null = null
+let temporizadorVision: number | null = null
 
 function detenerSuscripcionCajones() {
   suscripcionCajones?.detener()

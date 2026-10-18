@@ -1,6 +1,16 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Identity, Index, Integer, String, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    String,
+    false,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -26,6 +36,12 @@ class Sesion(Base):
     token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revocado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    vision_autorizada: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=false(),
+    )
     creado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

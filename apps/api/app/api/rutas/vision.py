@@ -2,7 +2,8 @@
 
 from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+import anyio
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -74,6 +75,7 @@ def obtener_configuracion(
 def guardar_configuracion(
     solicitud: SolicitudConfiguracionVision,
     response: Response,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaConfiguracionVision:
     response.headers.update(CABECERA_NO_CACHE)
@@ -84,17 +86,25 @@ def guardar_configuracion(
     except SQLAlchemyError:
         db.rollback()
         _error_interno()
+    hub = getattr(request.app.state, "vision_frame_hub", None)
+    if hub is not None:
+        anyio.from_thread.run(hub.actualizar_revision, resultado["revision"])
     return RespuestaConfiguracionVision.model_validate(resultado)
 
 
 @router.post("/sessions", response_model=RespuestaSesionVision)
-def iniciar_sesion(
+async def iniciar_sesion(
+    request: Request,
     response: Response,
     db: Annotated[Session, Depends(get_db)],
 ) -> RespuestaSesionVision:
     response.headers.update(CABECERA_NO_CACHE)
     try:
-        return RespuestaSesionVision.model_validate(iniciar_sesion_vision(db))
+        resultado = RespuestaSesionVision.model_validate(iniciar_sesion_vision(db))
+        hub = getattr(request.app.state, "vision_frame_hub", None)
+        if hub is not None:
+            await hub.nueva_sesion(resultado.session_id, resultado.revision)
+        return resultado
     except SQLAlchemyError:
         db.rollback()
         _error_interno()

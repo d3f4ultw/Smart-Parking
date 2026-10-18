@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import colorsys
 import math
 import os
 import sys
@@ -264,6 +265,15 @@ def load_model() -> YOLO:
     return YOLO(checkpoint)
 
 
+def load_model_from_path(model_path: str | Path) -> YOLO:
+    """Carga un checkpoint explícito sin intentar descargarlo."""
+
+    checkpoint = Path(model_path).expanduser()
+    if not checkpoint.is_file():
+        raise FileNotFoundError("El checkpoint configurado no está disponible.")
+    return YOLO(str(checkpoint))
+
+
 def is_blank_frame(frame: object) -> bool:
     """Detect a fully black or near-black source frame."""
     return int(frame.max()) <= 1
@@ -379,13 +389,32 @@ def draw_vehicle_detections(
     return display
 
 
-def zone_color(state: OccupancyState) -> tuple[int, int, int]:
+def zone_color(
+    state: OccupancyState,
+    *,
+    ready: bool = True,
+) -> tuple[int, int, int]:
     """Use colors reserved for zone-state polygons and labels."""
+    if not ready:
+        return (150, 150, 150)
     if state is OccupancyState.OCUPADO:
         return (0, 210, 0)
     if state is OccupancyState.CANDIDATO_OCUPADO:
         return (0, 165, 255)
     return (210, 210, 210)
+
+
+def zone_identity_color(identifier: str) -> tuple[int, int, int]:
+    """Return a stable BGR color derived from the permanent C-number."""
+    if not identifier.startswith("C") or not identifier[1:].isdigit():
+        return (150, 150, 150)
+    numero = int(identifier[1:])
+    if numero < 1:
+        return (150, 150, 150)
+
+    matiz = ((numero - 1) * 137.508) % 360 / 360
+    rojo, verde, azul = colorsys.hls_to_rgb(matiz, 0.56, 0.78)
+    return round(azul * 255), round(verde * 255), round(rojo * 255)
 
 
 def draw_zone_states(
@@ -407,24 +436,30 @@ def draw_zone_states(
         return
 
     for snapshot in snapshots:
-        color = zone_color(snapshot.state)
+        color_estado = zone_color(snapshot.state, ready=snapshot.is_ready)
+        color_identidad = zone_identity_color(snapshot.identifier)
+        estado = snapshot.state.value if snapshot.is_ready else "DESCONOCIDO"
         points = [
             (round(x * (width - 1)), round(y * (height - 1)))
             for x, y in snapshot.polygon
         ]
-        cv2.polylines(display, [np.array(points, dtype="int32")], True, color, 2)
+        puntos_np = np.array(points, dtype="int32")
+        capa_relleno = display.copy()
+        cv2.fillPoly(capa_relleno, [puntos_np], color_identidad)
+        cv2.addWeighted(capa_relleno, 0.14, display, 0.86, 0, display)
+        cv2.polylines(display, [puntos_np], True, color_identidad, 2, cv2.LINE_AA)
         if compact_labels:
             state_label = (
                 "CANDIDATO"
                 if snapshot.state is OccupancyState.CANDIDATO_OCUPADO
-                else snapshot.state.value
+                else estado
             )
             label = f"{snapshot.identifier}: {state_label}"
             font_scale = 0.48
             thickness = 1
             anchor_y = max(16, min(height - 5, max(point[1] for point in points) - 8))
         else:
-            label = f"{snapshot.identifier}: {snapshot.state.value}"
+            label = f"{snapshot.identifier}: {estado}"
             font_scale = 0.55
             thickness = 2
             anchor_y = max(16, min(point[1] for point in points) - 8)
@@ -445,7 +480,11 @@ def draw_zone_states(
             )
         cv2.putText(
             display, label, (anchor_x + (3 if compact_labels else 0), anchor_y),
-            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA,
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale, (8, 10, 14), thickness + 2, cv2.LINE_AA,
+        )
+        cv2.putText(
+            display, label, (anchor_x + (3 if compact_labels else 0), anchor_y),
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color_estado, thickness, cv2.LINE_AA,
         )
 
 

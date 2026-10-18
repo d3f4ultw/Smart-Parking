@@ -81,6 +81,41 @@ def test_no_publica_si_la_configuracion_canonica_no_tiene_zonas() -> None:
     assert client.publicar_observaciones(()) is False
 
 
+def test_cliente_envia_frame_crudo_720p_dentro_del_limite_de_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = uuid4()
+    jpeg = bytearray(768 * 1024)
+    jpeg[:2] = b"\xff\xd8"
+    jpeg[-2:] = b"\xff\xd9"
+    solicitudes = []
+
+    class RespuestaAceptada:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, _limite: int) -> bytes:
+            return b'{"accepted":true}'
+
+    def enviar(peticion, *, timeout: float):
+        solicitudes.append((peticion, timeout))
+        return RespuestaAceptada()
+
+    monkeypatch.setattr(cliente_modulo, "urlopen", enviar)
+    client = SmartParkingClient("http://localhost:8000", token="v" * 43)
+
+    client.publicar_frame("raw", session_id, 4, 1, bytes(jpeg))
+
+    assert len(solicitudes) == 1
+    peticion, _ = solicitudes[0]
+    assert peticion.full_url.endswith("/api/vision/frames/raw")
+    assert len(peticion.data) == 768 * 1024
+    assert peticion.get_header("Content-type") == "image/jpeg"
+
+
 def test_la_cache_del_api_reemplaza_cualquier_archivo_local_anterior(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

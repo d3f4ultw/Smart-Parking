@@ -45,6 +45,8 @@ from app.api.rutas.operadores import (
     router as operadores_router,
 )
 from app.api.rutas.vision import router as vision_router
+from app.api.rutas.vision_owner import router as vision_owner_router
+from app.api.rutas.vision_owner import router_vision as vision_frames_router
 
 __all__ = [
     "RUTA_LOGIN",
@@ -66,4 +68,6 @@ __all__ = [
     "gestion_propietario_router",
     "operadores_router",
     "vision_router",
+    "vision_owner_router",
+    "vision_frames_router",
 ]

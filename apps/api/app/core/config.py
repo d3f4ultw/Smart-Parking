@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr
@@ -32,6 +33,14 @@ class Settings(BaseSettings):
     vision_bearer_token: SecretStr | None = Field(
         default=None,
         validation_alias="VISION_BEARER_TOKEN",
+    )
+    vision_reference_frame_path: Path | None = Field(
+        default=None,
+        validation_alias="VISION_REFERENCE_FRAME_PATH",
+    )
+    vision_source_mode: Literal["simulation", "camera"] = Field(
+        default="simulation",
+        validation_alias="VISION_SOURCE_MODE",
     )
     smtp_from_email: str | None = Field(
         default=None,

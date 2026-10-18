@@ -18,7 +18,7 @@ from calibracion_zonas import (
     guardar_calibracion,
 )
 from calibrar_zonas import ControlRaton, _procesar_tecla, dibujar_superposicion, ejecutar
-from detect import draw_zone_states
+from detect import draw_zone_states, zone_identity_color
 from temporal_validation import (
     OccupancyState,
     ParkingZone,
@@ -361,6 +361,13 @@ class CalibracionZonasTests(unittest.TestCase):
 
         self.assertEqual(resultado.shape, imagen.shape)
         self.assertFalse(np.array_equal(resultado, imagen))
+
+    def test_zone_identity_colors_are_stable_and_separate_from_occupancy(self):
+        self.assertEqual(zone_identity_color("C1"), (55, 55, 230))
+        self.assertEqual(zone_identity_color("C1"), zone_identity_color("C1"))
+        self.assertNotEqual(zone_identity_color("C1"), zone_identity_color("C2"))
+        self.assertNotEqual(zone_identity_color("C2"), zone_identity_color("C3"))
+        self.assertEqual(zone_identity_color("invalid"), (150, 150, 150))
 
     def test_detection_zone_overlay_accepts_dynamic_identifier(self):
         zone = ParkingZone("C1", ((0.1, 0.1), (0.7, 0.1), (0.5, 0.8)))
