@@ -6,6 +6,7 @@ export default defineNuxtConfig({
   modules: ['@nuxt/eslint'],
   runtimeConfig: {
     apiInternalBaseUrl: 'http://api-dev:8000',
+    sessionCookieName: 'smart_parking_session',
     public: {
       managementOrigin: 'http://localhost:3000',
     },

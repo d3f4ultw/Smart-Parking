@@ -28,6 +28,7 @@ services:
       NUXT_HOST: 0.0.0.0
       NUXT_API_INTERNAL_BASE_URL: "${NUXT_API_INTERNAL_BASE_URL:-http://api-dev:8000}"
       NUXT_PUBLIC_MANAGEMENT_ORIGIN: "${APP_PUBLIC_URL:-http://localhost:3000}"
+      NUXT_SESSION_COOKIE_NAME: "${SESSION_COOKIE_NAME:-smart_parking_session}"
       CHOKIDAR_USEPOLLING: "true"
     # Solo loopback en Windows/WSL; evita exponer el servicio en otras interfaces.
     # Cambiar a 0.0.0.0 requiere revalidar el forwarding localhost de Windows/Podman.
@@ -61,6 +62,8 @@ services:
       ACTIVATION_TOKEN_TTL_HOURS: "${ACTIVATION_TOKEN_TTL_HOURS:?Set ACTIVATION_TOKEN_TTL_HOURS in the root .env}"
       ACTIVATION_CHALLENGE_TTL_MINUTES: "${ACTIVATION_CHALLENGE_TTL_MINUTES:?Set ACTIVATION_CHALLENGE_TTL_MINUTES in the root .env}"
       VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:-}"
+      VISION_REFERENCE_FRAME_PATH: /var/lib/smart-parking-vision/parking_test_reference.png
+      VISION_SOURCE_MODE: "${VISION_SOURCE_MODE:-simulation}"
       CORREO_TRANSPORTE: "${CORREO_TRANSPORTE:-smtp}"
       SMTP_HOST: "${SMTP_HOST:-mailpit}"
       SMTP_PORT: "${SMTP_PORT:-1025}"
@@ -76,6 +79,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./apps/api:/app
+      - ./apps/vision/parking_test_reference.png:/var/lib/smart-parking-vision/parking_test_reference.png:ro
     networks:
       - development
     depends_on:
@@ -88,13 +92,30 @@ services:
     build:
       context: .
       dockerfile: apps/vision/Containerfile.dev
-    command: ["serve", "--api-url", "http://api-dev:8000"]
+    command: []
     environment:
       VISION_API_BASE_URL: "http://api-dev:8000"
       VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:-}"
       VISION_STATE_PATH: /var/lib/smart-parking-vision
+      VISION_MODEL_PATH: /opt/models/yolo26n.pt
+      VISION_SOURCE_MODE: "${VISION_SOURCE_MODE:-simulation}"
+      VISION_SOURCE_URL: "${VISION_SOURCE_URL:-http://host.containers.internal:4747/video}"
+      VISION_SIMULATION_DIR: /app/vision/simulations
+      VISION_FRAME_DURATION_SECONDS: "${VISION_FRAME_DURATION_SECONDS:-15}"
+      VISION_INFERENCE_FPS: "${VISION_INFERENCE_FPS:-25}"
+      VISION_DISPLAY_FPS: "${VISION_DISPLAY_FPS:-25}"
+      VISION_TORCH_NUM_THREADS: "${VISION_TORCH_NUM_THREADS:-3}"
+      VISION_TORCH_NUM_INTEROP_THREADS: "${VISION_TORCH_NUM_INTEROP_THREADS:-1}"
+      VISION_OPENCV_NUM_THREADS: "${VISION_OPENCV_NUM_THREADS:-1}"
+      VISION_DISPLAY_MAX_DIMENSION: "960"
+      VISION_FRAME_JPEG_QUALITY: "75"
+      VISION_FRAME_MAX_BYTES: "1048576"
+      VISION_IMAGE_SIZE: "640"
+      VISION_API_TIMEOUT_SECONDS: "2"
     volumes:
       - vision_state:/var/lib/smart-parking-vision
+      - ./apps/vision/models:/opt/models:ro
+      - ./apps/vision/simulations:/app/vision/simulations:ro
     networks:
       - development
     depends_on:

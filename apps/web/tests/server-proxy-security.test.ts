@@ -48,6 +48,7 @@ type Harness = {
 const WEB_ROOT = resolveWebRoot()
 const NUXT_CLI = join(WEB_ROOT, 'node_modules', 'nuxt', 'bin', 'nuxt.mjs')
 const MAX_CAPTURED_LOG_CHARS = 96_000
+const NOMBRE_COOKIE_SESION = process.env.NUXT_SESSION_COOKIE_NAME || 'smart_parking_session'
 
 function resolveWebRoot() {
   return join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -126,7 +127,7 @@ function captureRequest(request: IncomingMessage, body: string): CapturedRequest
   }
 }
 
-async function startHarness(): Promise<Harness> {
+async function startHarness(options: { sessionCookieName?: string } = {}): Promise<Harness> {
   const requests: CapturedRequest[] = []
   const plans: UpstreamPlan[] = []
   const tempRoot = await mkdtemp(join(tmpdir(), 'sp031-nitro-'))
@@ -270,6 +271,9 @@ async function startHarness(): Promise<Harness> {
         detached: process.platform !== 'win32',
         env: {
           ...process.env,
+          ...(options.sessionCookieName === undefined
+            ? {}
+            : { NUXT_SESSION_COOKIE_NAME: options.sessionCookieName }),
           NUXT_API_INTERNAL_BASE_URL: upstreamUrl,
           NUXT_PUBLIC_MANAGEMENT_ORIGIN: origin,
           NUXT_TELEMETRY_DISABLED: '1',
@@ -479,7 +483,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       const unrelatedCookie = marker()
       const deviceToken = marker()
       sensitiveMarkers.push(sessionToken, unrelatedCookie, deviceToken)
-      const cookie = `smart_parking_session=${sessionToken}; unrelated=${unrelatedCookie}`
+      const cookie = `${NOMBRE_COOKIE_SESION}=${sessionToken}; unrelated=${unrelatedCookie}`
       const payload = { cajones: [], cursor_eventos: '17' }
       const response = await send(
         '/api/admin/cajones',
@@ -499,7 +503,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assertForwarded(response, 'GET', '/api/cajones')
       assert.equal(
         response.upstreamRequest?.cookie,
-        `smart_parking_session=${sessionToken}`,
+        `${NOMBRE_COOKIE_SESION}=${sessionToken}`,
         'Only the staff session cookie reaches FastAPI',
       )
       assert.equal(response.upstreamRequest?.role, undefined, 'Client role is not forwarded')
@@ -509,6 +513,36 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assert.deepEqual(JSON.parse(response.body), payload, 'Valid listing body is preserved')
       assert.equal(response.response.headers.get('cache-control'), 'no-store')
       assertNoSensitiveBody(response.body)
+
+      const nombreCookieConfigurado = 'smart_parking_vision_sandbox_session'
+      const tokenSesionConfigurado = marker()
+      const cookieAjena = marker()
+      sensitiveMarkers.push(tokenSesionConfigurado, cookieAjena)
+      const harnessConfigurado = await startHarness({
+        sessionCookieName: nombreCookieConfigurado,
+      })
+      try {
+        harnessConfigurado.queueResponse(jsonPlan(200, payload))
+        const respuestaConfigurada = await fetch(
+          `${harnessConfigurado.origin}/api/admin/cajones`,
+          {
+            headers: {
+              cookie: `${nombreCookieConfigurado}=${tokenSesionConfigurado}; unrelated=${cookieAjena}`,
+            },
+          },
+        )
+        const cuerpoConfigurado = await respuestaConfigurada.text()
+        assert.equal(respuestaConfigurada.status, 200)
+        assert.equal(
+          harnessConfigurado.requests[0]?.cookie,
+          `${nombreCookieConfigurado}=${tokenSesionConfigurado}`,
+          'The configured session cookie reaches FastAPI without unrelated cookies',
+        )
+        assert.deepEqual(JSON.parse(cuerpoConfigurado), payload)
+        assertNoSensitiveBody(cuerpoConfigurado)
+      } finally {
+        await harnessConfigurado.close()
+      }
 
       harness.clearRequests()
       const forgedRole = await send(
@@ -824,7 +858,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         {
           method: 'PATCH',
           headers: {
-            cookie: `smart_parking_session=${sessionCookie}; unrelated=${unrelatedCookie}`,
+            cookie: `${NOMBRE_COOKIE_SESION}=${sessionCookie}; unrelated=${unrelatedCookie}`,
             'content-type': 'application/json',
             'x-user-role': 'OWNER',
             'x-role': 'OWNER',
@@ -838,7 +872,7 @@ test('Nitro BFF security boundary preserves upstream contracts', {
 
       assert.equal(actualizado.response.status, 200, 'PATCH status is preserved')
       assertForwarded(actualizado, 'PATCH', '/api/cajones/41/estado-operativo')
-      assert.equal(actualizado.upstreamRequest?.cookie, `smart_parking_session=${sessionCookie}`)
+      assert.equal(actualizado.upstreamRequest?.cookie, `${NOMBRE_COOKIE_SESION}=${sessionCookie}`)
       assert.equal(actualizado.upstreamRequest?.contentType?.split(';')[0], 'application/json')
       assert.equal(actualizado.upstreamRequest?.body, patchBody, 'Allowed JSON fields are forwarded')
       assert.equal(actualizado.upstreamRequest?.role, undefined)
@@ -1210,7 +1244,6 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         },
         onClose: cerrarUpstream,
       })
-
       const respuesta = await fetch(
         `${harness.origin}/api/eventos?cursor_eventos=41&rol=OWNER&topic=operador.creado`,
         { headers: { cookie }, signal: AbortSignal.timeout(10_000) },
@@ -1323,6 +1356,95 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         delay(3000).then(() => assert.fail('Delayed SSE cancellation did not close upstream')),
       ])
       harness.clearRequests()
+    })
+
+    await suite.test('Vision MJPEG BFF flushes headers, forwards only its cookie, and cancels upstream', async () => {
+      const nombreCookieSesion = process.env.NUXT_SESSION_COOKIE_NAME || 'smart_parking_session'
+      const cookie = `${nombreCookieSesion}=${marker()}`
+      const boundary = 'vision-test-frame'
+      const frame = `--${boundary}\r\nContent-Type: image/jpeg\r\nContent-Length: 4\r\n\r\n\xff\xd8\xff\xd9\r\n`
+      let cerrarUpstream!: () => void
+      const upstreamCerrado = new Promise<void>((resolve) => {
+        cerrarUpstream = resolve
+      })
+      const controlador = new AbortController()
+      const plan: UpstreamPlan = {
+        status: 200,
+        body: frame,
+        stream: true,
+        firstChunkDelayMs: 1200,
+        headers: {
+          'content-type': `multipart/x-mixed-replace; boundary=${boundary}`,
+          'cache-control': 'no-store',
+        },
+        onClose: cerrarUpstream,
+      }
+      harness.queueResponse(plan)
+
+      let respuesta: Response | undefined
+      let lector: ReadableStreamDefaultReader<Uint8Array> | undefined
+      try {
+        const inicio = Date.now()
+        respuesta = await fetch(
+          `${harness.origin}/api/admin/vision/monitor/stream`,
+          {
+            headers: {
+              cookie,
+              authorization: `Bearer ${marker()}`,
+              'x-user-role': 'OWNER',
+              'x-user-id': '27',
+            },
+            signal: AbortSignal.any([controlador.signal, AbortSignal.timeout(10_000)]),
+          },
+        )
+        assert.equal(respuesta.status, 200, 'A valid session cookie reaches the private stream')
+        assert.ok(
+          Date.now() - inicio < 1000,
+          'The BFF flushes headers before the first frame',
+        )
+        assert.equal(
+          respuesta.headers.get('content-type'),
+          `multipart/x-mixed-replace; boundary=${boundary}`,
+        )
+        assert.equal(respuesta.headers.get('cache-control'), 'no-store')
+        assert.equal(respuesta.headers.get('x-accel-buffering'), 'no')
+
+        lector = respuesta.body?.getReader()
+        assert.ok(lector, 'The MJPEG response remains a readable stream')
+        const decoder = new TextDecoder()
+        const preambulo = await lector.read()
+        assert.equal(preambulo.done, false)
+        assert.equal(decoder.decode(preambulo.value), '\r\n')
+        const primerFrame = await lector.read()
+        assert.equal(primerFrame.done, false)
+        assert.ok(
+          decoder.decode(primerFrame.value).includes(`--${boundary}`),
+          'The multipart frame reaches the browser',
+        )
+
+        const solicitud = harness.requests[0]
+        assert.ok(solicitud, 'Nitro reached the private FastAPI stream')
+        assert.equal(solicitud.path, '/api/admin/vision/monitor/stream')
+        assert.equal(solicitud.cookie, cookie)
+        assert.equal(solicitud.accept, 'multipart/x-mixed-replace')
+        assert.equal(solicitud.authorization, undefined, 'Browser bearer is not forwarded')
+        assert.equal(solicitud.role, undefined, 'Browser role is not forwarded')
+        assert.equal(solicitud.userId, undefined, 'Browser identity is not forwarded')
+      } finally {
+        controlador.abort()
+        const cierreCliente = lector?.cancel().catch(() => undefined)
+          ?? respuesta?.body?.cancel().catch(() => undefined)
+        if (cierreCliente) {
+          await Promise.race([cierreCliente, delay(2000)])
+        }
+        harness.cancelResponse(plan)
+        harness.clearRequests()
+      }
+
+      await Promise.race([
+        upstreamCerrado,
+        delay(3000).then(() => assert.fail('Downstream cancellation did not close FastAPI stream')),
+      ])
     })
 
     await suite.test('non-SSE error bodies keep status and JSON response semantics', async () => {

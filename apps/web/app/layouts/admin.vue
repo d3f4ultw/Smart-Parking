@@ -58,7 +58,7 @@ const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Owner' : 'A
 const inicialAdmin = computed(() => nombreAdmin.value.charAt(0).toUpperCase())
 
 function esRutaActiva(
-  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'configuracion',
+  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'configuracion' | 'vision',
 ) {
   if (ruta === 'inicio') {
     return route.path === '/admin'
@@ -70,6 +70,10 @@ function esRutaActiva(
 
   if (ruta === 'configuracion') {
     return route.path === '/admin/configuracion'
+  }
+
+  if (ruta === 'vision') {
+    return route.path.startsWith('/admin/vision/')
   }
 
   return route.path.startsWith('/admin/operadores')
@@ -224,6 +228,34 @@ onBeforeUnmount(() => {
           </svg>
           <span>Estacionamiento</span>
         </NuxtLink>
+        <template v-if="usuario?.rol === 'OWNER'">
+          <p class="navigation-label vision-label">VISION IA</p>
+          <NuxtLink
+            class="navigation-item"
+            :class="{ 'is-active': route.path.startsWith('/admin/vision/monitoreo') }"
+            to="/admin/vision/monitoreo"
+            :aria-current="route.path.startsWith('/admin/vision/monitoreo') ? 'page' : undefined"
+            @click="cerrarMenuMovil"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="5" width="18" height="14" rx="2" />
+              <path d="m10 9 5 3-5 3z" />
+            </svg>
+            <span>Monitoreo</span>
+          </NuxtLink>
+          <NuxtLink
+            class="navigation-item"
+            :class="{ 'is-active': route.path === '/admin/vision/zonas' }"
+            to="/admin/vision/zonas"
+            :aria-current="route.path === '/admin/vision/zonas' ? 'page' : undefined"
+            @click="cerrarMenuMovil"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 20h16M6 16l9-9 3 3-9 9H6zM14 8l2-2 3 3-2 2" />
+            </svg>
+            <span>Zonas de Vision</span>
+          </NuxtLink>
+        </template>
         <NuxtLink
           v-if="usuario?.rol === 'OWNER'"
           class="navigation-item"

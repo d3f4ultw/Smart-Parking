@@ -127,6 +127,9 @@ def test_configuracion_vision_asigna_canonicos_e_idempotencia(
     creada = _guardar(vision_client, token_vision, 0, solicitud, request_id)
     assert creada.status_code == 200
     instantanea = creada.json()
+    recargada = vision_client.get("/api/vision/configuration", headers=encabezados)
+    assert recargada.status_code == 200
+    assert recargada.json() == instantanea
     assert [zona["numero"] for zona in instantanea["zones"]] == [1, 2]
     assert all(zona["cajon_id"] > 0 for zona in instantanea["zones"])
     assert len({zona["cajon_id"] for zona in instantanea["zones"]}) == 2
@@ -238,6 +241,100 @@ def test_vision_fencea_sesion_revision_y_secuencia_y_acepta_snapshot_completo(
         )["stale"]
         is True
     )
+
+
+def test_cambio_de_poligono_conserva_sesion_y_fencea_revision_de_observaciones(
+    vision_client: TestClient,
+    db: Session,
+    token_vision: str,
+) -> None:
+    _reiniciar_zonas(db)
+    creada = _guardar(
+        vision_client,
+        token_vision,
+        0,
+        [_crear_zona(POLIGONO_A)],
+    )
+    zona = creada.json()["zones"][0]
+    encabezados = {"Authorization": f"Bearer {token_vision}"}
+    sesion = vision_client.post("/api/vision/sessions", headers=encabezados).json()
+    latido = vision_client.post(
+        "/api/vision/heartbeat",
+        headers=encabezados,
+        json={
+            "request_id": str(uuid4()),
+            "session_id": sesion["session_id"],
+            "sequence": 1,
+        },
+    )
+    assert latido.status_code == 200
+
+    actualizada = _guardar(
+        vision_client,
+        token_vision,
+        1,
+        [
+            {
+                "vision_zone_id": zona["vision_zone_id"],
+                "numero": zona["numero"],
+                "polygon": POLIGONO_B,
+            }
+        ],
+    )
+    assert actualizada.status_code == 200
+    assert actualizada.json()["revision"] == 2
+    db.expire_all()
+    configuracion_db = db.get(VisionConfiguration, 1)
+    assert configuracion_db is not None
+    assert str(configuracion_db.current_session_id) == sesion["session_id"]
+    assert configuracion_db.last_sequence == 1
+    assert configuracion_db.last_heartbeat_at is not None
+    assert configuracion_db.last_observation_at is None
+
+    latido_despues_de_guardar = vision_client.post(
+        "/api/vision/heartbeat",
+        headers=encabezados,
+        json={
+            "request_id": str(uuid4()),
+            "session_id": sesion["session_id"],
+            "sequence": 2,
+        },
+    )
+    assert latido_despues_de_guardar.status_code == 200
+
+    solicitud_observacion_vieja = {
+        "request_id": str(uuid4()),
+        "session_id": sesion["session_id"],
+        "revision": 1,
+        "sequence": 3,
+        "observations": [
+            {
+                "vision_zone_id": zona["vision_zone_id"],
+                "numero": zona["numero"],
+                "estado": "OCUPADO",
+            }
+        ],
+    }
+    assert vision_client.post(
+        "/api/vision/observations",
+        headers=encabezados,
+        json=solicitud_observacion_vieja,
+    ).status_code == 409
+
+    misma_configuracion = _guardar(
+        vision_client,
+        token_vision,
+        2,
+        [
+            {
+                "vision_zone_id": zona["vision_zone_id"],
+                "numero": zona["numero"],
+                "polygon": POLIGONO_B,
+            }
+        ],
+    )
+    assert misma_configuracion.status_code == 200
+    assert misma_configuracion.json()["revision"] == 2
 
 
 def test_retirar_zona_no_reutiliza_numero_y_eliminar_toda_configuracion_es_valido(

@@ -55,9 +55,9 @@ def _configuracion_bloqueada(db: Session) -> VisionConfiguration:
 
 def _normalizar_poligono(zona: ZonaVision) -> list[list[float]]:
     puntos = [[float(x), float(y)] for x, y in zona.polygon]
-    if len(puntos) < 3 or len(puntos) > 128:
-        raise VisionConfiguracionError("El poligono debe tener entre 3 y 128 vertices.")
-    if len({(punto[0], punto[1]) for punto in puntos}) < 3 or any(
+    if len(puntos) < 4 or len(puntos) > 128:
+        raise VisionConfiguracionError("El poligono debe tener entre 4 y 128 vertices.")
+    if len({(punto[0], punto[1]) for punto in puntos}) < 4 or any(
         punto == puntos[(indice + 1) % len(puntos)]
         for indice, punto in enumerate(puntos)
     ):
@@ -185,7 +185,9 @@ def _respuesta_configuracion(
 
 
 def cargar_configuracion_vision(db: Session) -> dict[str, Any]:
-    configuracion = _configuracion_bloqueada(db)
+    configuracion = db.get(VisionConfiguration, 1)
+    if configuracion is None:
+        raise RuntimeError("No existe la configuracion singleton de Vision.")
     return _respuesta_configuracion(db, configuracion)
 
 
@@ -259,11 +261,9 @@ def guardar_configuracion_vision(
                 cajon.activa = False
                 cambios.append(cajon)
 
-        configuracion.revision += 1
-        configuracion.current_session_id = None
-        configuracion.last_sequence = 0
-        configuracion.last_heartbeat_at = None
-        configuracion.last_observation_at = None
+        if cambios:
+            configuracion.revision += 1
+            configuracion.last_observation_at = None
         db.flush()
 
         for cajon in cambios:
