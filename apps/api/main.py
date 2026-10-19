@@ -24,6 +24,8 @@ from app.api.rutas import (
     eventos_tiempo_real_router,
     gestion_propietario_router,
     operadores_router,
+    vision_frames_router,
+    vision_owner_router,
     vision_router,
 )
 from app.api.rutas.eventos import cerrar_leases_sse_activas
@@ -38,6 +40,7 @@ from app.models import (  # noqa: F401
     SesionGestionPropietario,
     Usuario,
 )
+from app.servicios.vision_frames import VisionFrameHub
 
 
 @asynccontextmanager
@@ -45,22 +48,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Valida SMTP antes de recibir trafico cuando ese transporte esta activo."""
 
     settings = get_settings()
+    _app.state.vision_frame_hub = VisionFrameHub()
     if settings.correo_transporte == "smtp":
         cargar_configuracion_smtp(settings)
     try:
         yield
     finally:
+        await _app.state.vision_frame_hub.cerrar()
         await cerrar_leases_sse_activas()
 
 
 app = FastAPI(title="Smart Parking API", lifespan=lifespan)
 app.state.database_engine = engine
+
+
 app.include_router(autenticacion_router)
 app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
 app.include_router(vision_router)
+app.include_router(vision_frames_router)
+app.include_router(vision_owner_router)
 app.include_router(operadores_router)
 app.include_router(activaciones_operador_router)
 app.include_router(activaciones_propietario_router)

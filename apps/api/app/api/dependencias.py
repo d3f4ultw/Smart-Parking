@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.models import RolUsuario, Usuario
 from app.servicios.autenticacion import obtener_usuario_por_token
+from app.servicios.autorizacion_vision import sesion_tiene_autorizacion_vision
 
 DETALLE_SESION_NO_AUTENTICADA = "No autenticado"
 CABECERA_NO_CACHE = {"Cache-Control": "no-store"}
@@ -124,6 +125,39 @@ def exigir_owner(
     return usuario_id
 
 
+def exigir_vision_owner_autorizado(
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+    usuario_id: Annotated[int, Depends(exigir_owner)],
+) -> int:
+    """Exige la autorizacion administrativa ligada a esta sesion OWNER."""
+
+    response.headers.update(CABECERA_NO_CACHE)
+    token = request.cookies.get(get_settings().session_cookie_name)
+    try:
+        autorizado = token is not None and sesion_tiene_autorizacion_vision(
+            db,
+            token_sesion=token,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error interno",
+            headers=CABECERA_NO_CACHE,
+        ) from None
+    if not autorizado:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Se requiere autorizacion Vision",
+            headers=CABECERA_NO_CACHE,
+        )
+    db.rollback()
+    return usuario_id
+
+
 def _error_vision_no_autenticada() -> NoReturn:
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -164,5 +198,6 @@ __all__ = [
     "exigir_vision",
     "exigir_operador",
     "exigir_owner",
+    "exigir_vision_owner_autorizado",
     "exigir_personal",
 ]

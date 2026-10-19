@@ -1,0 +1,2 @@
+# Sustituye al paquete con GUI que instala Ultralytics en requirements-yolo.txt.
+opencv-python-headless==4.14.0.94

@@ -3,6 +3,17 @@
 .env.*
 *.env
 !/.env.example
+*.credentials
+*.token
+*.pem
+*.key
+*.p12
+*.pfx
+*.dump
+*.backup
+*.sqlite
+*.sqlite3
+*.db
 
 # Local AI and CodeGraph state
 /.agents/
@@ -10,6 +21,11 @@
 
 # Local-only execution and audit history
 /reports/
+
+# Local Vision runtime assets and generated evidence
+/apps/vision/models/
+/apps/vision/zones.json
+/apps/vision/reports/
 
 # Python environments and generated caches
 .venv/

@@ -12,6 +12,7 @@ from sqlalchemy import create_engine, delete, text, update
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.api.rutas.vision_owner import limitador_autorizacion_vision
 from app.core.config import Settings
 from app.models import (
     ActivacionCuenta,
@@ -48,11 +49,13 @@ def estado_rate_limit_aislado() -> Generator[None]:
     limitador_autenticacion.reiniciar()
     limitador_confirmacion_desvinculacion.reiniciar()
     limitador_solicitud_desvinculacion.reiniciar()
+    limitador_autorizacion_vision.reiniciar()
     yield
     limitador_activaciones.reiniciar()
     limitador_autenticacion.reiniciar()
     limitador_confirmacion_desvinculacion.reiniciar()
     limitador_solicitud_desvinculacion.reiniciar()
+    limitador_autorizacion_vision.reiniciar()
 
 
 @pytest.fixture(scope="session", autouse=True)

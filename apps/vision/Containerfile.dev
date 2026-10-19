@@ -6,8 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app/vision
 
-RUN python -m pip install --no-cache-dir numpy==2.3.4
+COPY apps/vision/requirements-yolo.txt apps/vision/requirements.txt apps/vision/requirements-runtime.txt ./
 
-COPY apps/vision/smart_parking_client.py apps/vision/temporal_validation.py ./
+RUN python -m pip install --no-cache-dir -r requirements-yolo.txt \
+    && python -m pip uninstall --yes opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless
 
-ENTRYPOINT ["python", "smart_parking_client.py"]
+RUN python -m pip install --no-cache-dir -r requirements-runtime.txt \
+    && python -c "import importlib.metadata as m; names={d.metadata['Name'].lower().replace('_','-') for d in m.distributions()}; assert 'opencv-python-headless' in names and not ({'opencv-python','opencv-contrib-python','opencv-contrib-python-headless'} & names)"
+
+COPY apps/vision/capture.py apps/vision/detect.py apps/vision/simulation_playback.py \
+     apps/vision/smart_parking_client.py apps/vision/temporal_validation.py \
+     apps/vision/vision_runtime.py ./
+
+RUN python -m compileall -q .
+
+ENTRYPOINT ["python", "vision_runtime.py"]

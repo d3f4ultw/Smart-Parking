@@ -186,6 +186,7 @@ def revocar_sesion_actual(
             return
 
         sesion.revocado_en = ahora_utc
+        sesion.vision_autorizada = False
         db.commit()
     except SQLAlchemyError:
         db.rollback()
@@ -212,7 +213,7 @@ def revocar_sesiones_vigentes(
             Sesion.revocado_en.is_(None),
             Sesion.expira_en > ahora_utc,
         )
-        .values(revocado_en=ahora_utc)
+        .values(revocado_en=ahora_utc, vision_autorizada=False)
     )
     return int(getattr(resultado, "rowcount", 0) or 0)
 
@@ -232,7 +233,7 @@ def revocar_sesiones_usuario(
             Sesion.usuario_id == usuario_id,
             Sesion.revocado_en.is_(None),
         )
-        .values(revocado_en=ahora_utc)
+        .values(revocado_en=ahora_utc, vision_autorizada=False)
     )
     return int(getattr(resultado, "rowcount", 0) or 0)
 
