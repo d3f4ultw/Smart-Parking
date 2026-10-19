@@ -5,6 +5,7 @@ import {
   puedeMantenerStreamVision,
   puedeMostrarFrameAnotadoVision,
 } from '~/utils/vision-monitoring'
+import { crearCicloVidaVisor } from '~/utils/vision-viewer-lifecycle'
 
 definePageMeta({
   layout: 'vision-editor',
@@ -48,6 +49,9 @@ const anchoFrame = ref(0)
 const altoFrame = ref(0)
 let temporizadorEstado: number | null = null
 let limpiezaStream: Promise<void> | null = null
+let controladorEstado: AbortController | null = null
+let actualizacionesActivas = false
+let cicloVidaDocumento: ReturnType<typeof crearCicloVidaVisor> | null = null
 
 const streamMjpeg = useVisionMjpegStream(
   '/api/admin/vision/monitor/stream?tipo=annotated',
@@ -102,34 +106,69 @@ const mensajeVista = computed(() => {
 })
 
 async function cargarEstado() {
-  if (!vision.autorizado.value || actualizandoEstado.value) return
+  if (!actualizacionesActivas || !vision.autorizado.value || controladorEstado !== null) return
+  const controlador = new AbortController()
+  controladorEstado = controlador
   actualizandoEstado.value = true
   try {
-    estadoFuente.value = await fetchVision<EstadoMonitoreoVision>(
+    const estado = await fetchVision<EstadoMonitoreoVision>(
       '/api/admin/vision/monitor/status',
+      { signal: controlador.signal },
     )
+    if (controladorEstado !== controlador || !actualizacionesActivas) return
+    estadoFuente.value = estado
     errorEstado.value = ''
   } catch (fallo: unknown) {
+    if (controlador.signal.aborted || controladorEstado !== controlador || !actualizacionesActivas) return
     estadoFuente.value = null
     errorEstado.value = 'No se pudo consultar el estado de la cámara. Se reintentará automáticamente.'
     await vision.manejarErrorProtegido(fallo)
   } finally {
-    actualizandoEstado.value = false
+    if (controladorEstado === controlador) {
+      controladorEstado = null
+      actualizandoEstado.value = false
+    }
+  }
+}
+
+function detenerStream() {
+  if (limpiezaStream !== null) return limpiezaStream
+  if (streamMjpeg.estado.value === 'detenido' && streamMjpeg.frameUrl.value === '') {
+    return Promise.resolve()
+  }
+  limpiezaStream = streamMjpeg.detener().finally(() => {
+    limpiezaStream = null
+  })
+  return limpiezaStream
+}
+
+async function iniciarStream() {
+  if (limpiezaStream !== null) await limpiezaStream
+  if (!actualizacionesActivas || !vision.autorizado.value || !puedeMantenerStream.value) return
+  streamMjpeg.iniciar()
+}
+
+function iniciarActualizaciones() {
+  if (!import.meta.client || !vision.autorizado.value) return
+  actualizacionesActivas = true
+  void cargarEstado()
+  if (temporizadorEstado === null) {
+    temporizadorEstado = window.setInterval(() => void cargarEstado(), 1000)
   }
 }
 
 function detenerActualizaciones() {
+  actualizacionesActivas = false
+  controladorEstado?.abort()
+  controladorEstado = null
+  actualizandoEstado.value = false
   if (temporizadorEstado !== null) {
     window.clearInterval(temporizadorEstado)
     temporizadorEstado = null
   }
   estadoFuente.value = null
   errorEstado.value = ''
-  if (limpiezaStream !== null) return limpiezaStream
-  limpiezaStream = streamMjpeg.detener().finally(() => {
-    limpiezaStream = null
-  })
-  return limpiezaStream
+  return detenerStream()
 }
 
 function registrarFrame(evento: Event) {
@@ -150,6 +189,10 @@ function alOcultarDocumento() {
   void detenerActualizaciones()
 }
 
+function alRestaurarDocumento() {
+  iniciarActualizaciones()
+}
+
 async function cerrarVisor() {
   await detenerActualizaciones()
   window.close()
@@ -164,24 +207,26 @@ watch(vision.autorizado, (autorizado) => {
     void detenerActualizaciones()
     return
   }
-
-  void cargarEstado()
-  if (temporizadorEstado === null) {
-    temporizadorEstado = window.setInterval(() => void cargarEstado(), 1000)
-  }
+  iniciarActualizaciones()
 }, { immediate: true })
 
 watch([() => vision.autorizado.value, puedeMantenerStream], ([autorizado, disponible]) => {
   if (!import.meta.client) return
-  if (autorizado && disponible) {
-    streamMjpeg.iniciar()
+  if (actualizacionesActivas && autorizado && disponible) {
+    void iniciarStream()
   } else {
-    void streamMjpeg.detener()
+    void detenerStream()
   }
 }, { immediate: true })
 
 onMounted(() => {
-  window.addEventListener('pagehide', alOcultarDocumento, { once: true })
+  if (cicloVidaDocumento !== null) return
+  cicloVidaDocumento = crearCicloVidaVisor(
+    window,
+    alOcultarDocumento,
+    alRestaurarDocumento,
+  )
+  cicloVidaDocumento.registrar()
 })
 
 onBeforeRouteLeave(async () => {
@@ -189,7 +234,8 @@ onBeforeRouteLeave(async () => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('pagehide', alOcultarDocumento)
+  cicloVidaDocumento?.liberar()
+  cicloVidaDocumento = null
   void detenerActualizaciones()
 })
 </script>

@@ -87,13 +87,17 @@ test('keeps the stream lifecycle independent from annotated revision readiness',
   assert.doesNotMatch(condicionStream, /annotated_frame_fresh|applied_revision/)
 })
 
-test('cleans the viewer on navigation and tab exit using the shared stream lifecycle', () => {
+test('cleans and restores the viewer across route exit and BFCache lifecycle', () => {
   assert.match(cameraPage, /onBeforeRouteLeave/)
   assert.match(cameraPage, /onBeforeUnmount/)
-  assert.match(cameraPage, /addEventListener\('pagehide'/)
-  assert.match(cameraPage, /removeEventListener\('pagehide'/)
+  assert.match(cameraPage, /crearCicloVidaVisor/)
+  assert.match(cameraPage, /alRestaurarDocumento/)
+  assert.match(cameraPage, /actualizacionesActivas && autorizado && disponible/)
+  assert.match(cameraPage, /temporizadorEstado === null/)
+  assert.match(cameraPage, /controladorEstado\?\.abort\(\)/)
   assert.match(cameraPage, /detenerActualizaciones/)
   assert.match(cameraPage, /streamMjpeg\.detener\(\)/)
+  assert.match(cameraPage, /streamMjpeg\.iniciar\(\)/)
   assert.match(streamComposable, /controladorCiclo\?\.abort\(\)/)
   assert.match(streamComposable, /controladorPeticion\?\.abort\(\)/)
   assert.match(streamComposable, /await lector\.cancel\(\)/)
