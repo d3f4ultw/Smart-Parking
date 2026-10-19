@@ -243,8 +243,8 @@ onBeforeUnmount(() => {
 <template>
   <AdminVisionAuthorizationGate
     pantalla-completa
-    titulo="Acceso a cámara en vivo"
-    descripcion="Autoriza esta sesión de OWNER para ver el stream protegido de Vision."
+    titulo="Cámara en vivo"
+    descripcion="Ingresa la contraseña administrativa para ver la cámara en vivo."
   >
     <main
       class="camera-viewer"
@@ -310,7 +310,7 @@ onBeforeUnmount(() => {
   padding: clamp(12px, 2vw, 24px);
   overflow: hidden;
   color: #e9edf4;
-  background: #0d1117;
+  background: #000000;
   font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -318,34 +318,35 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   display: flex;
   min-width: 0;
-  min-height: 52px;
+  min-height: 64px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 clamp(10px, 1.4vw, 18px);
-  border: 1px solid #293340;
+  justify-content: flex-start;
+  gap: clamp(18px, 2.4vw, 32px);
+  padding: 0 clamp(18px, 2.2vw, 28px);
+  border: 1px solid #292929;
   border-radius: 12px;
-  background: #151b24;
+  background: #111111;
 }
 
 .camera-title {
-  display: grid;
-  min-width: 150px;
-  gap: 3px;
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 12px;
 }
 
 .camera-eyebrow {
-  margin: 0 0 4px;
-  color: #72b9f4;
-  font-size: .66rem;
+  margin: 0;
+  color: #5c3a86;
+  font-size: .7rem;
   font-weight: 800;
   letter-spacing: .14em;
 }
 
 h1 {
   margin: 0;
-  color: #f2f5fa;
-  font-size: clamp(1.08rem, 2vw, 1.35rem);
+  color: #f5f5f5;
+  font-size: clamp(1.15rem, 1.8vw, 1.35rem);
   font-weight: 750;
   line-height: 1.2;
   letter-spacing: -.025em;
@@ -355,18 +356,18 @@ h1 {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   margin-left: auto;
-  min-height: 36px;
-  padding: 0 12px;
-  border: 1px solid #303b49;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid #303030;
   border-radius: 999px;
-  background: #10161e;
+  background: #151515;
 }
 
 .camera-status strong {
-  color: #e9edf4;
-  font-size: .82rem;
+  color: #eeeeee;
+  font-size: .86rem;
   font-weight: 750;
 }
 
@@ -375,36 +376,38 @@ h1 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #d18348;
-  box-shadow: 0 0 0 4px rgb(209 131 72 / 14%);
+  background: #98929f;
+  box-shadow: 0 0 0 4px rgb(152 146 159 / 14%);
 }
 
 .camera-status-dot.is-live {
-  background: #24c18c;
-  box-shadow: 0 0 0 4px rgb(36 193 140 / 15%);
+  background: #5c3a86;
+  box-shadow: 0 0 0 4px rgb(92 58 134 / 16%);
 }
 
 .close-viewer {
   flex: 0 0 auto;
   min-height: 38px;
   padding: 0 13px;
-  border: 1px solid #384454;
+  min-height: 40px;
+  padding-inline: 16px;
+  border: 1px solid #383838;
   border-radius: 10px;
-  color: #e9edf4;
-  background: #151b24;
+  color: #f0f0f0;
+  background: #151515;
   font: inherit;
-  font-size: .76rem;
+  font-size: .82rem;
   font-weight: 700;
   cursor: pointer;
 }
 
 .close-viewer:hover {
-  border-color: #72b9f4;
-  color: #91cbfb;
+  border-color: #5c3a86;
+  background: #222222;
 }
 
 .close-viewer:focus-visible {
-  outline: 3px solid rgb(114 185 244 / 36%);
+  outline: 3px solid rgb(92 58 134 / 24%);
   outline-offset: 2px;
 }
 
@@ -416,9 +419,9 @@ h1 {
   flex: 1 1 auto;
   place-items: center;
   overflow: hidden;
-  border: 1px solid #293340;
+  border: 1px solid #242424;
   border-radius: 10px;
-  background: #070a0f;
+  background: #000000;
 }
 
 .camera-stage > img {
@@ -440,7 +443,7 @@ h1 {
   gap: 9px;
   padding: 24px;
   color: #e9edf4;
-  background: rgb(7 10 15 / 94%);
+  background: rgb(0 0 0 / 94%);
   text-align: center;
 }
 
@@ -452,8 +455,8 @@ h1 {
 .camera-spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid #455469;
-  border-top-color: #72b9f4;
+  border: 2px solid #454545;
+  border-top-color: #9b77c4;
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }
@@ -474,16 +477,26 @@ h1 {
 
   .camera-toolbar {
     flex-wrap: wrap;
-    gap: 9px 12px;
-    padding-block: 7px;
+    min-height: 0;
+    gap: 12px;
+    padding: 12px 14px;
   }
 
   .camera-title {
+    flex: 1 1 100%;
     min-width: 0;
+    gap: 9px;
+  }
+
+  .camera-eyebrow {
+    font-size: .62rem;
+  }
+
+  h1 {
+    font-size: 1.08rem;
   }
 
   .camera-status {
-    order: 3;
     width: fit-content;
     max-width: 100%;
     margin-left: 0;

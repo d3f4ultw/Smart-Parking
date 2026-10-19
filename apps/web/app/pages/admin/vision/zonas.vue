@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
 <template>
   <AdminVisionAuthorizationGate
     titulo="Cajones del estacionamiento"
-    descripcion="Autoriza la cuenta OWNER para consultar y editar los cajones."
+    descripcion="Ingresa la contraseña administrativa para consultar y editar los cajones."
   >
     <main class="zones-page">
       <header class="page-heading">
@@ -335,7 +335,6 @@ onBeforeUnmount(() => {
             <h2 id="zones-title">Cajones registrados</h2>
             <p>{{ configuracion?.zones.length ?? 0 }} activos</p>
           </div>
-          <span class="no-stream-badge"><span /> Cámara solo al editar</span>
         </div>
 
         <div v-if="cargando && configuracion === null" class="loading-state" role="status">
@@ -395,7 +394,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.zones-page { max-width: 1160px; min-height: calc(100vh - 120px); margin: 0 auto; padding: 38px clamp(18px, 4vw, 54px) 52px; color: var(--admin-foreground); }
+.zones-page { width: 100%; min-width: 0; min-height: 0; margin: 0; padding: 0; color: var(--admin-foreground); }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 26px; }
 .eyebrow { margin: 0 0 7px; color: var(--admin-accent); font-size: .69rem; font-weight: 800; letter-spacing: .15em; }
 h1 { margin: 0; font-size: clamp(1.7rem, 3vw, 2.25rem); letter-spacing: -.04em; }
@@ -412,11 +411,10 @@ h1:focus { outline: 2px solid var(--admin-focus); outline-offset: 4px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 19px 20px; border-bottom: 1px solid var(--admin-border); }
 .panel-heading h2 { margin: 0; color: var(--admin-foreground); font-size: 1rem; }
 .panel-heading p { margin: 5px 0 0; color: var(--admin-muted); font-size: .76rem; }
-.no-stream-badge { display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid #d9a74c33; border-radius: 7px; color: #98702d; background: #fef9ed; font-size: .68rem; font-weight: 750; }
-.no-stream-badge span { width: 7px; height: 7px; border-radius: 50%; background: #d19c39; }
-.zone-list { padding: 0; margin: 0; list-style: none; }
-.zone-row { display: grid; grid-template-columns: 15px minmax(110px,1fr) minmax(125px,.7fr) auto; align-items: center; gap: 15px; min-height: 78px; padding: 13px 20px; border-bottom: 1px solid var(--admin-border); }
-.zone-row:last-child { border-bottom: 0; }
+.zone-list { overflow: hidden; padding: 0; margin: 12px 14px 14px; list-style: none; border: 1px solid var(--admin-border); border-radius: 10px; background: var(--admin-surface-soft); }
+.zone-row { display: grid; grid-template-columns: 15px minmax(110px,1fr) minmax(125px,.7fr) auto; align-items: center; gap: 15px; min-height: 72px; padding: 12px 18px; transition: background-color 150ms ease; }
+.zone-row + .zone-row { border-top: 1px solid var(--admin-border); }
+.zone-row:hover { background: var(--admin-surface); }
 .zone-swatch { width: 13px; height: 13px; border: 1px solid #0002; border-radius: 50%; box-shadow: 0 0 0 3px color-mix(in srgb,var(--admin-surface) 80%,white); }
 .zone-identity { display: grid; gap: 4px; }
 .zone-identity strong { color: var(--admin-foreground); font-size: .9rem; }
@@ -452,5 +450,5 @@ h1:focus { outline: 2px solid var(--admin-focus); outline-offset: 4px; }
 .delete-confirm-button:hover:not(:disabled) { background: #8f3535; }
 .primary-button:focus-visible,.secondary-button:focus-visible,.edit-button:focus-visible,.delete-button:focus-visible,.delete-confirm-button:focus-visible { outline: 3px solid var(--admin-focus); outline-offset: 2px; }
 .delete-dialog:focus { outline: 2px solid var(--admin-focus); outline-offset: 3px; }
-@media (max-width: 760px) { .page-heading { align-items: start; flex-direction: column; } .heading-actions { width: 100%; justify-content: space-between; } .zone-row { grid-template-columns: 14px minmax(80px,1fr) auto; gap: 10px; padding: 12px; } .occupancy-state { grid-column: 2; grid-row: 2; } .zone-actions { grid-column: 3; grid-row: 1 / span 2; } .panel-heading { align-items: start; flex-direction: column; padding: 15px; } .no-stream-badge { align-self: start; } }
+@media (max-width: 760px) { .page-heading { align-items: start; flex-direction: column; } .heading-actions { width: 100%; justify-content: space-between; } .zone-row { grid-template-columns: 14px minmax(80px,1fr) auto; gap: 10px; padding: 12px; } .occupancy-state { grid-column: 2; grid-row: 2; } .zone-actions { grid-column: 3; grid-row: 1 / span 2; } .panel-heading { align-items: start; flex-direction: column; padding: 15px; } }
 </style>

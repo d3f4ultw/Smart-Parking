@@ -28,8 +28,8 @@ async function enviar() {
       ? fallo as { status?: unknown; statusCode?: unknown }
       : {}
     error.value = http.status === 429 || http.statusCode === 429
-      ? 'Se alcanzó el límite de intentos. Espera antes de volver a probar.'
-      : 'La contraseña administrativa no es válida.'
+      ? 'Has intentado varias veces. Espera un momento y vuelve a intentarlo.'
+      : 'La contraseña administrativa no es correcta. Inténtalo otra vez.'
   } finally {
     enviando.value = false
   }
@@ -60,7 +60,7 @@ onMounted(() => {
     role="status"
     aria-live="polite"
   >
-    <span v-if="!props.pantallaCompleta">Verificando autorización de Vision…</span>
+    <span v-if="!props.pantallaCompleta">Preparando la vista…</span>
   </section>
   <section
     v-else-if="vision.estado.value.state === 'error'"
@@ -71,19 +71,19 @@ onMounted(() => {
   >
     <div class="vision-gate-copy">
       <p class="vision-eyebrow">VISION IA</p>
-      <h2 id="vision-gate-recovery-title">No se pudo verificar la autorización</h2>
-      <p>No se pudo verificar la autorización por un problema de conexión. Reintenta para continuar.</p>
+      <h2 id="vision-gate-recovery-title">No pudimos abrir esta vista</h2>
+      <p>Hubo un problema momentáneo. Inténtalo de nuevo.</p>
       <button
         class="vision-primary-button"
         type="button"
         :disabled="reintentando"
         @click="actualizarAutorizacion"
       >
-        {{ reintentando ? 'Reintentando…' : 'Reintentar verificación' }}
+        {{ reintentando ? 'Reintentando…' : 'Intentar de nuevo' }}
       </button>
     </div>
   </section>
-  <section v-else class="vision-gate" aria-labelledby="vision-gate-title">
+  <section v-else class="vision-gate" :class="{ 'vision-gate--pantalla-completa': props.pantallaCompleta }" aria-labelledby="vision-gate-title">
     <div class="vision-gate-copy">
       <p class="vision-eyebrow">VISION IA</p>
       <h2 id="vision-gate-title">{{ props.titulo }}</h2>
@@ -101,10 +101,9 @@ onMounted(() => {
         >
         <p v-if="error" class="vision-inline-error" role="alert">{{ error }}</p>
         <button class="vision-primary-button" type="submit" :disabled="enviando || contrasena.length === 0">
-          {{ enviando ? 'Verificando…' : 'Entrar' }}
+          {{ enviando ? 'Un momento…' : 'Continuar' }}
         </button>
       </form>
-      <p class="vision-gate-note">La autorización dura solo esta sesión de OWNER.</p>
     </div>
   </section>
 </template>
@@ -112,27 +111,48 @@ onMounted(() => {
 <style scoped>
 .vision-gate,
 .vision-gate-loading {
+  box-sizing: border-box;
   width: min(100%, 31rem);
   margin: clamp(2rem, 8vh, 4.5rem) auto;
   padding: clamp(1.25rem, 4vw, 1.75rem);
   border: 1px solid var(--admin-border);
   border-radius: 1rem;
   background: var(--admin-surface);
+  font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+.vision-gate--pantalla-completa,
+.vision-gate--recovery-fullscreen,
+.vision-gate-loading--pantalla-completa {
+  --admin-foreground: #29252f;
+  --admin-muted: #746f7b;
+  --admin-subtle: #98929f;
+  --admin-border: #e8e5eb;
+  --admin-surface: #ffffff;
+  --admin-surface-soft: #f8f7f9;
+  --admin-accent: #5c3a86;
+  --admin-accent-hover: #6c4a97;
+  --admin-focus: rgb(92 58 134 / 22%);
+  display: grid;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100dvh;
+  place-items: center;
+  margin: 0;
+  padding: clamp(1rem, 4vw, 3rem);
+  border: 0;
+  border-radius: 0;
+  color: var(--admin-foreground);
+  background: #f6f5f7;
+  color-scheme: light;
+  font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
 }
 
 .vision-gate-loading--pantalla-completa {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  box-sizing: border-box;
-  width: 100%;
-  height: 100dvh;
-  margin: 0;
   padding: 1rem;
-  border: 0;
-  border-radius: 0;
-  color: #9caabd;
-  background: #0d1118;
   font-size: 0;
 }
 
@@ -140,34 +160,22 @@ onMounted(() => {
   width: 1rem;
   height: 1rem;
   flex: 0 0 1rem;
-  border: 2px solid #384454;
-  border-top-color: #72b9f4;
+  border: 2px solid #e8e5eb;
+  border-top-color: #5c3a86;
   border-radius: 50%;
   content: '';
   animation: vision-loading-spin .7s linear infinite;
 }
 
-.vision-gate--recovery-fullscreen {
-  display: grid;
-  align-content: center;
+.vision-gate--pantalla-completa .vision-gate-copy,
+.vision-gate--recovery-fullscreen .vision-gate-copy {
   box-sizing: border-box;
-  width: 100%;
-  min-height: 100dvh;
-  margin: 0;
-}
-
-.vision-gate--recovery .vision-primary-button {
-  margin-top: .5rem;
-}
-
-@keyframes vision-loading-spin {
-  to { transform: rotate(360deg); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vision-gate-loading--pantalla-completa::before {
-    animation: none;
-  }
+  width: min(100%, 31rem);
+  padding: clamp(1.5rem, 5vw, 2.25rem);
+  border: 1px solid var(--admin-border);
+  border-radius: 1rem;
+  background: var(--admin-surface);
+  box-shadow: 0 1.25rem 3rem rgb(41 37 47 / 8%);
 }
 
 .vision-gate-copy {
@@ -175,7 +183,7 @@ onMounted(() => {
 }
 
 .vision-eyebrow {
-  margin: 0 0 .5rem;
+  margin: 0 0 .55rem;
   color: var(--admin-accent);
   font-size: .7rem;
   font-weight: 750;
@@ -185,19 +193,22 @@ onMounted(() => {
 h2 {
   margin: 0;
   color: var(--admin-foreground);
-  font-size: 1.2rem;
-  line-height: 1.35;
+  font-size: clamp(1.35rem, 3vw, 1.65rem);
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -.025em;
 }
 
 .vision-gate-copy > p:not(.vision-eyebrow) {
+  margin: .65rem 0 0;
   color: var(--admin-muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .vision-gate-form {
   display: grid;
-  gap: .6rem;
-  margin-top: 1.25rem;
+  gap: .65rem;
+  margin-top: 1.5rem;
 }
 
 .vision-gate-form label {
@@ -207,10 +218,12 @@ h2 {
 }
 
 .vision-gate-form input {
+  box-sizing: border-box;
+  width: 100%;
   min-height: 2.75rem;
   padding: .6rem .75rem;
   color: var(--admin-foreground);
-  background: var(--admin-surface-soft);
+  background: var(--admin-surface);
   border: 1px solid var(--admin-border);
   border-radius: .6rem;
   font: inherit;
@@ -222,7 +235,8 @@ h2 {
 }
 
 .vision-primary-button {
-  min-height: 2.65rem;
+  min-height: 2.75rem;
+  margin-top: .2rem;
   padding: 0 1rem;
   color: #fff;
   background: var(--admin-accent);
@@ -243,7 +257,7 @@ h2 {
 }
 
 .vision-primary-button:disabled {
-  color: var(--admin-accent);
+  color: var(--admin-subtle);
   background: var(--admin-surface-soft);
   border: 1px solid var(--admin-border);
   cursor: not-allowed;
@@ -255,9 +269,17 @@ h2 {
   font-size: .86rem;
 }
 
-.vision-gate-note {
-  margin: 1rem 0 0;
-  color: var(--admin-subtle);
-  font-size: .75rem;
+.vision-gate--recovery .vision-primary-button {
+  margin-top: 1rem;
+}
+
+@keyframes vision-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vision-gate-loading--pantalla-completa::before {
+    animation: none;
+  }
 }
 </style>

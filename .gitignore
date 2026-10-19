@@ -71,3 +71,6 @@ desktop.ini
 /firmware/esp32/parking_slot/secrets.py
 
 /scripts/
+
+# Local machine-specific Compose configuration
+/infra/compose.dev.yml

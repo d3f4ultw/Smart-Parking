@@ -35,9 +35,8 @@ const route = useRoute()
 <style scoped>
 .monitoring-page {
   display: grid;
-  min-height: clamp(30rem, 78vh, 56rem);
-  align-content: stretch;
-  padding-block: clamp(1rem, 3vh, 2.5rem);
+  min-height: 0;
+  align-content: start;
 }
 
 .monitoring-card {
@@ -46,8 +45,8 @@ const route = useRoute()
   justify-items: center;
   gap: clamp(1rem, 2vh, 1.5rem);
   width: 100%;
-  min-height: 100%;
-  padding: clamp(2rem, 6vw, 5rem);
+  min-height: 0;
+  padding: clamp(1.5rem, 3vw, 2.5rem);
   background: #ffffff;
   border: 1px solid #e7e1eb;
   border-radius: 1rem;
@@ -118,10 +117,6 @@ h1 {
 }
 
 @media (max-width: 620px) {
-  .monitoring-page {
-    min-height: clamp(22rem, 64vh, 34rem);
-  }
-
   .monitoring-card {
     padding: clamp(1.5rem, 7vw, 2.25rem);
   }

@@ -892,7 +892,7 @@ onBeforeUnmount(() => {
   <AdminVisionAuthorizationGate
     pantalla-completa
     titulo="Cajones del estacionamiento"
-    descripcion="Autoriza la cuenta OWNER para editar los cajones."
+    descripcion="Ingresa la contraseña administrativa para editar los cajones."
   >
     <AdminToastNotifications />
     <main

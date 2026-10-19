@@ -228,6 +228,27 @@ onBeforeUnmount(() => {
           </svg>
           <span>Estacionamiento</span>
         </NuxtLink>
+        <NuxtLink
+          v-if="usuario?.rol === 'OWNER'"
+          class="navigation-item"
+          :class="{ 'is-active': esRutaActiva('operadores') }"
+          to="/admin/operadores"
+          :aria-current="esRutaActiva('operadores') ? 'page' : undefined"
+          @click="cerrarMenuMovil"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3.5" />
+            <path d="M2.5 20v-1.5A4.5 4.5 0 0 1 7 14h4a4.5 4.5 0 0 1 4.5 4.5V20M16 5a3.5 3.5 0 0 1 0 6.8M17 14h.5a4 4 0 0 1 4 4v2" />
+          </svg>
+          <span>Operadores</span>
+        </NuxtLink>
+        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" />
+          </svg>
+          <span>Registros</span>
+          <small>Próximamente</small>
+        </button>
         <template v-if="usuario?.rol === 'OWNER'">
           <p class="navigation-label vision-label">VISION IA</p>
           <NuxtLink
@@ -253,31 +274,9 @@ onBeforeUnmount(() => {
             <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M4 20h16M6 16l9-9 3 3-9 9H6zM14 8l2-2 3 3-2 2" />
             </svg>
-            <span>Zonas de Vision</span>
+            <span>Cajones</span>
           </NuxtLink>
         </template>
-        <NuxtLink
-          v-if="usuario?.rol === 'OWNER'"
-          class="navigation-item"
-          :class="{ 'is-active': esRutaActiva('operadores') }"
-          to="/admin/operadores"
-          :aria-current="esRutaActiva('operadores') ? 'page' : undefined"
-          @click="cerrarMenuMovil"
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="9" cy="8" r="3.5" />
-            <path d="M2.5 20v-1.5A4.5 4.5 0 0 1 7 14h4a4.5 4.5 0 0 1 4.5 4.5V20M16 5a3.5 3.5 0 0 1 0 6.8M17 14h.5a4 4 0 0 1 4 4v2" />
-          </svg>
-          <span>Operadores</span>
-        </NuxtLink>
-        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" />
-          </svg>
-          <span>Registros</span>
-          <small>Próximamente</small>
-        </button>
-
         <p class="navigation-label account-label">CUENTA</p>
         <NuxtLink
           v-if="usuario?.rol === 'OWNER'"
