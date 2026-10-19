@@ -31,6 +31,8 @@ from app.api.rutas.configuracion_estacionamiento import (
 from app.api.rutas.configuracion_estacionamiento import (
     router_acceso as configuracion_acceso_router,
 )
+from app.api.rutas.empleados import RUTA_ADMIN_EMPLEADOS
+from app.api.rutas.empleados import router as empleados_router
 from app.api.rutas.eventos import router as eventos_tiempo_real_router
 from app.api.rutas.gestion_propietario import (
     RUTA_GESTION_PROPIETARIO,
@@ -65,6 +67,7 @@ __all__ = [
     "RUTA_CONFIGURACION_ACCESO",
     "RUTA_GESTION_PROPIETARIO",
     "RUTA_HORARIOS_EMPLEADOS",
+    "RUTA_ADMIN_EMPLEADOS",
     "activaciones_operador_router",
     "activaciones_propietario_router",
     "autenticacion_router",
@@ -72,6 +75,7 @@ __all__ = [
     "configuracion_estacionamiento_router",
     "configuracion_acceso_router",
     "eventos_tiempo_real_router",
+    "empleados_router",
     "gestion_propietario_router",
     "horarios_empleados_router",
     "operadores_router",

@@ -11,6 +11,7 @@ from app.models.configuracion_estacionamiento import (
 )
 from app.models.cuenta_propietario import CuentaPropietario
 from app.models.desvinculacion_propietario import DesvinculacionPropietario
+from app.models.empleado import Empleado
 from app.models.eventos_tiempo_real import (
     ConexionSSEUsuario,
     EstadoEventosTiempoReal,
@@ -38,6 +39,7 @@ __all__ = [
     "ConfiguracionEstacionamiento",
     "CuentaPropietario",
     "DesvinculacionPropietario",
+    "Empleado",
     "EstadoEventosTiempoReal",
     "EstadoEfectivoCajon",
     "EstadoFisicoCajon",

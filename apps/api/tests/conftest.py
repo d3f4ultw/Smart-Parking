@@ -21,6 +21,7 @@ from app.models import (
     ConfiguracionEstacionamiento,
     CuentaPropietario,
     DesvinculacionPropietario,
+    Empleado,
     EstadoEventosTiempoReal,
     EventoTiempoReal,
     HistorialModalidadEstacionamiento,
@@ -184,6 +185,7 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(ConexionSSEUsuario))
         session.execute(delete(EventoTiempoReal))
         session.execute(delete(HistorialModalidadEstacionamiento))
+        session.execute(delete(Empleado))
         session.execute(delete(TurnoEmpleado))
         session.execute(delete(ConfiguracionEstacionamiento))
         session.execute(delete(Usuario))

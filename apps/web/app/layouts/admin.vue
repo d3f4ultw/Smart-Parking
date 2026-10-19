@@ -5,10 +5,14 @@ import {
   crearControladorEventosTiempoReal,
   proveerEventosTiempoReal,
 } from '~/utils/eventos-tiempo-real'
+import { construirCapacidadesEmpleados } from '~/utils/empleados'
 import { mapearErrorLogout } from '~/utils/logout'
 
 const route = useRoute()
 const { usuario, limpiarSesion } = useSesion()
+const capacidadesEmpleados = computed(() =>
+  construirCapacidadesEmpleados(usuario.value?.rol),
+)
 const { cerrarSesion } = useLogout()
 const eventosTiempoReal = crearControladorEventosTiempoReal({
   alPerderSesion: async () => {
@@ -53,12 +57,12 @@ const nombreAdmin = computed(() => {
   return nombreCompleto || usuario.value.correo
 })
 
-const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Owner' : 'Administrador')
+const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Dueño' : 'Administrador')
 
 const inicialAdmin = computed(() => nombreAdmin.value.charAt(0).toUpperCase())
 
 function esRutaActiva(
-  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'configuracion' | 'vision',
+  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'empleados' | 'configuracion' | 'vision',
 ) {
   if (ruta === 'inicio') {
     return route.path === '/admin'
@@ -74,6 +78,10 @@ function esRutaActiva(
 
   if (ruta === 'vision') {
     return route.path.startsWith('/admin/vision/')
+  }
+
+  if (ruta === 'empleados') {
+    return route.path.startsWith('/admin/empleados')
   }
 
   return route.path.startsWith('/admin/operadores')
@@ -241,6 +249,20 @@ onBeforeUnmount(() => {
             <path d="M2.5 20v-1.5A4.5 4.5 0 0 1 7 14h4a4.5 4.5 0 0 1 4.5 4.5V20M16 5a3.5 3.5 0 0 1 0 6.8M17 14h.5a4 4 0 0 1 4 4v2" />
           </svg>
           <span>Operadores</span>
+        </NuxtLink>
+        <NuxtLink
+          v-if="capacidadesEmpleados.leer"
+          class="navigation-item"
+          :class="{ 'is-active': esRutaActiva('empleados') }"
+          to="/admin/empleados"
+          :aria-current="esRutaActiva('empleados') ? 'page' : undefined"
+          @click="cerrarMenuMovil"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="9" cy="8" r="3.2" />
+            <path d="M2.8 20v-1.2a4.7 4.7 0 0 1 4.7-4.7h3a4.7 4.7 0 0 1 4.7 4.7V20M16.5 7.2a3 3 0 0 1 0 5.8M17.2 14.4h.4a3.7 3.7 0 0 1 3.6 3.7v1.8" />
+          </svg>
+          <span>Empleados</span>
         </NuxtLink>
         <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

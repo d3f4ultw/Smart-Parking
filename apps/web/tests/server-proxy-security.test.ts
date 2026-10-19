@@ -27,6 +27,7 @@ type CapturedRequest = {
   accept?: string
   lastEventId?: string
   contentType?: string
+  idempotencyKey?: string
   role?: string
   roleAlias?: string
   userId?: string
@@ -118,6 +119,7 @@ function captureRequest(request: IncomingMessage, body: string): CapturedRequest
     accept: headerValue(request.headers.accept),
     lastEventId: headerValue(request.headers['last-event-id']),
     contentType: headerValue(request.headers['content-type']),
+    idempotencyKey: headerValue(request.headers['idempotency-key']),
     role: headerValue(request.headers['x-user-role']),
     roleAlias: headerValue(request.headers['x-role']),
     userId: headerValue(request.headers['x-user-id']),
@@ -2090,6 +2092,133 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         assertNoSensitiveBody(result.body)
       }
       harness.clearRequests()
+    })
+
+    await suite.test('employee BFF validates requests and forwards only required headers', async () => {
+      const session = marker()
+      const cookie = `smart_parking_session=${session}`
+      const requestId = randomUUID()
+      harness.clearRequests()
+
+      const listado = await send(
+        '/api/admin/empleados?pagina=2',
+        {
+          headers: {
+            cookie,
+            origin: 'https://attacker.invalid',
+            authorization: 'Bearer no-forward',
+            'x-user-role': 'OWNER',
+          },
+        },
+        jsonPlan(200, { empleados: [], pagina: 2, total: 0 }),
+      )
+      assert.equal(listado.response.status, 200)
+      assertForwarded(listado, 'GET', '/api/admin/empleados?pagina=2')
+      assert.equal(listado.upstreamRequest?.cookie, cookie)
+      assert.equal(listado.upstreamRequest?.origin, undefined)
+      assert.equal(listado.upstreamRequest?.authorization, undefined)
+      assert.equal(listado.upstreamRequest?.role, undefined)
+      assert.equal(listado.response.headers.get('cache-control'), 'no-store')
+
+      harness.clearRequests()
+      const consultaInvalida = await send('/api/admin/empleados?pagina=2&buscar=Ana')
+      assert.equal(consultaInvalida.response.status, 422)
+      assert.equal(consultaInvalida.upstreamRequest, undefined)
+
+      harness.clearRequests()
+      const registro = await send(
+        '/api/admin/empleados',
+        {
+          method: 'POST',
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            'idempotency-key': requestId,
+            origin: 'https://attacker.invalid',
+            'x-user-role': 'OWNER',
+          },
+          body: JSON.stringify({
+            nombres: ' Ana María ',
+            apellido_paterno: ' López ',
+            apellido_materno: '   ',
+            turno_empleado_id: 4,
+          }),
+        },
+        jsonPlan(201, { id: '37', esta_activo: true }),
+      )
+      assert.equal(registro.response.status, 201)
+      assertForwarded(registro, 'POST', '/api/admin/empleados')
+      assert.equal(registro.upstreamRequest?.cookie, cookie)
+      assert.equal(registro.upstreamRequest?.idempotencyKey, requestId)
+      assert.equal(registro.upstreamRequest?.origin, undefined)
+      assert.equal(registro.upstreamRequest?.role, undefined)
+      assert.equal(
+        registro.upstreamRequest?.body,
+        JSON.stringify({
+          nombres: 'Ana María',
+          apellido_paterno: 'López',
+          apellido_materno: null,
+          turno_empleado_id: 4,
+        }),
+      )
+      assert.equal(registro.response.headers.get('cache-control'), 'no-store')
+
+      harness.clearRequests()
+      const registroInvalido = await send(
+        '/api/admin/empleados',
+        {
+          method: 'POST',
+          headers: { cookie, 'content-type': 'application/json', 'idempotency-key': requestId },
+          body: JSON.stringify({
+            nombres: 'Ana',
+            apellido_paterno: 'López',
+            turno_empleado_id: 4,
+            esta_activo: false,
+          }),
+        },
+      )
+      assert.equal(registroInvalido.response.status, 422)
+      assert.equal(registroInvalido.upstreamRequest, undefined)
+
+      harness.clearRequests()
+      const contentTypeInvalido = await send(
+        '/api/admin/empleados',
+        { method: 'POST', headers: { 'content-type': 'text/plain' }, body: '{}' },
+      )
+      assert.equal(contentTypeInvalido.response.status, 415)
+      assert.equal(contentTypeInvalido.upstreamRequest, undefined)
+
+      harness.clearRequests()
+      const cambioEstado = await send(
+        '/api/admin/empleados/37/estado',
+        {
+          method: 'PATCH',
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            origin: 'https://attacker.invalid',
+            'x-user-role': 'OWNER',
+          },
+          body: JSON.stringify({ esta_activo: false, revision_esperada: 7 }),
+        },
+        jsonPlan(409, { detail: 'El estado cambió en otra sesión.' }),
+      )
+      assert.equal(cambioEstado.response.status, 409)
+      assertForwarded(cambioEstado, 'PATCH', '/api/admin/empleados/37/estado')
+      assert.equal(cambioEstado.upstreamRequest?.cookie, cookie)
+      assert.equal(cambioEstado.upstreamRequest?.origin, undefined)
+      assert.equal(cambioEstado.upstreamRequest?.role, undefined)
+      assert.equal(cambioEstado.response.headers.get('cache-control'), 'no-store')
+
+      harness.clearRequests()
+      const idInvalido = await send(
+        '/api/admin/empleados/0/estado',
+        { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: '{}' },
+      )
+      assert.equal(idInvalido.response.status, 400)
+      assert.equal(idInvalido.upstreamRequest, undefined)
+      assertNoSensitiveBody(registro.body)
+      assertNoSensitiveBody(cambioEstado.body)
     })
   } finally {
     await harness.close()

@@ -9,6 +9,7 @@ from starlette.responses import Response
 from app.api.rutas import (
     RUTA_ACTIVACION_OPERADOR,
     RUTA_ACTIVACION_PROPIETARIO,
+    RUTA_ADMIN_EMPLEADOS,
     RUTA_CONFIGURACION_ACCESO,
     RUTA_CONFIGURACION_MODALIDAD,
     RUTA_CREAR_OPERADOR,
@@ -22,6 +23,7 @@ from app.api.rutas import (
     cajones_router,
     configuracion_acceso_router,
     configuracion_estacionamiento_router,
+    empleados_router,
     eventos_tiempo_real_router,
     gestion_propietario_router,
     horarios_empleados_router,
@@ -37,6 +39,7 @@ from app.correo.smtp import cargar_configuracion_smtp
 from app.models import (  # noqa: F401
     ActivacionCuenta,
     CuentaPropietario,
+    Empleado,
     InscripcionPropietario,
     Sesion,
     SesionGestionPropietario,
@@ -69,6 +72,7 @@ app.include_router(autenticacion_router)
 app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
 app.include_router(horarios_empleados_router)
+app.include_router(empleados_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
 app.include_router(vision_router)
@@ -103,6 +107,7 @@ RUTAS_SIN_CACHE = (
         RUTA_CONFIGURACION_MODALIDAD,
         RUTA_CONFIGURACION_ACCESO,
         RUTA_HORARIOS_EMPLEADOS,
+        RUTA_ADMIN_EMPLEADOS,
     }
 )
 
@@ -115,8 +120,10 @@ async def evitar_cache_en_autenticacion(
     """Evita cachear respuestas privadas de autenticación y configuración."""
 
     response = await call_next(request)
-    if request.url.path in RUTAS_SIN_CACHE or request.url.path.startswith(
-        "/api/gestion-propietario/v1/"
+    if (
+        request.url.path in RUTAS_SIN_CACHE
+        or request.url.path.startswith(f"{RUTA_ADMIN_EMPLEADOS}/")
+        or request.url.path.startswith("/api/gestion-propietario/v1/")
     ):
         response.headers["Cache-Control"] = "no-store"
     if request.url.path.startswith("/api/gestion-propietario/v1/"):

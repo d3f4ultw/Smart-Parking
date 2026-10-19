@@ -12,6 +12,13 @@ export default defineNuxtConfig({
     },
   },
   routeRules: {
+    '/admin/empleados': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
     '/activar-cuenta': {
       prerender: false,
       headers: {
