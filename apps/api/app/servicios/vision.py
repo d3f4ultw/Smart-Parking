@@ -17,6 +17,7 @@ from app.esquemas.vision import (
     RespuestaAceptacionVision,
     RespuestaConfiguracionVision,
     RespuestaSesionVision,
+    RespuestaZonaVision,
     SolicitudConfiguracionVision,
     SolicitudObservacionesVision,
     SolicitudSecuenciaVision,
@@ -25,6 +26,10 @@ from app.esquemas.vision import (
 from app.models import Cajon, VisionConfiguration, VisionRequest
 from app.servicios.cajones import crear_instantanea_evento_vision
 from app.servicios.eventos_operadores import registrar_evento_cajon
+from app.servicios.vision_calibration_lease import (
+    exigir_lease_libre_en_transaccion,
+    verificar_lease_en_transaccion,
+)
 
 UMBRAL_DESACTUALIZACION_SEGUNDOS = 45
 
@@ -173,12 +178,14 @@ def _respuesta_configuracion(
         revision=configuracion.revision,
         next_c_number=configuracion.next_c_number,
         zones=[
-            {
-                "vision_zone_id": cajon.vision_zone_id,
-                "numero": cajon.numero,
-                "cajon_id": cajon.id,
-                "polygon": cajon.poligono,
-            }
+            RespuestaZonaVision.model_validate(
+                {
+                    "vision_zone_id": cajon.vision_zone_id,
+                    "numero": cajon.numero,
+                    "cajon_id": cajon.id,
+                    "polygon": cajon.poligono,
+                }
+            )
             for cajon in zonas
         ],
     ).model_dump(mode="json")
@@ -194,12 +201,25 @@ def cargar_configuracion_vision(db: Session) -> dict[str, Any]:
 def guardar_configuracion_vision(
     db: Session,
     solicitud: SolicitudConfiguracionVision,
+    *,
+    token_sesion_hash: str | None = None,
+    editor_instance_id: UUID | None = None,
 ) -> dict[str, Any]:
+    if (token_sesion_hash is None) != (editor_instance_id is None):
+        raise ValueError("La identidad del lease de calibración está incompleta.")
     cuerpo = solicitud.model_dump(mode="json")
     digest = _digest(cuerpo)
     ahora = _ahora_utc()
 
     with db.begin():
+        if token_sesion_hash is None or editor_instance_id is None:
+            exigir_lease_libre_en_transaccion(db)
+        else:
+            verificar_lease_en_transaccion(
+                db,
+                token_sesion_hash=token_sesion_hash,
+                editor_instance_id=editor_instance_id,
+            )
         configuracion = _configuracion_bloqueada(db)
         reintento = _obtener_reintento(
             db,

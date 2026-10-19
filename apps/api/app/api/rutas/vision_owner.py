@@ -32,10 +32,14 @@ from app.esquemas.vision import (
     EstadoZonaRuntimeVision,
     RespuestaAutorizacionVision,
     RespuestaConfiguracionVision,
+    RespuestaEstadoLeaseCalibracionVision,
     RespuestaEstadoMonitoreoVision,
+    RespuestaLeaseCalibracionVision,
+    RespuestaLiberacionLeaseCalibracionVision,
     SolicitudAutorizacionVision,
     SolicitudConfiguracionVision,
     SolicitudEstadoRuntimeVision,
+    SolicitudLeaseCalibracionVision,
 )
 from app.models import VisionConfiguration
 from app.seguridad.limitador import LimitadorAutenticacion
@@ -54,6 +58,15 @@ from app.servicios.vision import (
     VisionConflictoError,
     cargar_configuracion_vision,
     guardar_configuracion_vision,
+)
+from app.servicios.vision_calibration_lease import (
+    DURACION_LEASE_SEGUNDOS,
+    VisionCalibracionLeaseError,
+    adquirir_lease,
+    consultar_disponibilidad,
+    liberar_lease,
+    liberar_lease_de_sesion,
+    renovar_lease,
 )
 from app.servicios.vision_frames import (
     MAXIMA_DIMENSION_FRAME_VISION,
@@ -286,16 +299,124 @@ def revocar_autorizacion_vision(
 ) -> RespuestaAutorizacionVision:
     _escribir_headers_privados(response)
     _exigir_mismo_origen(request, get_settings())
+    token = _obtener_token_sesion(request)
     try:
         revocar_autorizacion_vision_sesion(
             db,
             usuario_id=usuario_id,
-            token_sesion=_obtener_token_sesion(request),
+            token_sesion=token,
+        )
+        liberar_lease_de_sesion(
+            db,
+            token_sesion_hash=hash_token_sesion(token),
         )
     except SQLAlchemyError:
         db.rollback()
         _denegar(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
     return RespuestaAutorizacionVision(authorized=False)
+
+
+@router.get(
+    "/calibration-lease",
+    response_model=RespuestaEstadoLeaseCalibracionVision,
+    dependencies=[Depends(exigir_vision_owner_autorizado)],
+)
+def consultar_lease_calibracion_vision(
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> RespuestaEstadoLeaseCalibracionVision:
+    _escribir_headers_privados(response)
+    try:
+        return RespuestaEstadoLeaseCalibracionVision(
+            available=consultar_disponibilidad(db),
+            lease_duration_seconds=DURACION_LEASE_SEGUNDOS,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        _denegar(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
+
+
+@router.post(
+    "/calibration-lease/acquire",
+    response_model=RespuestaLeaseCalibracionVision,
+    dependencies=[Depends(exigir_vision_owner_autorizado)],
+)
+def adquirir_lease_calibracion_vision(
+    solicitud: SolicitudLeaseCalibracionVision,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> RespuestaLeaseCalibracionVision:
+    _escribir_headers_privados(response)
+    _exigir_mismo_origen(request, get_settings())
+    try:
+        adquirir_lease(
+            db,
+            token_sesion_hash=hash_token_sesion(_obtener_token_sesion(request)),
+            editor_instance_id=solicitud.editor_instance_id,
+        )
+    except VisionCalibracionLeaseError as error:
+        _denegar(status.HTTP_409_CONFLICT, str(error))
+    except SQLAlchemyError:
+        db.rollback()
+        _denegar(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
+    return RespuestaLeaseCalibracionVision(
+        lease_duration_seconds=DURACION_LEASE_SEGUNDOS,
+    )
+
+
+@router.post(
+    "/calibration-lease/renew",
+    response_model=RespuestaLeaseCalibracionVision,
+    dependencies=[Depends(exigir_vision_owner_autorizado)],
+)
+def renovar_lease_calibracion_vision(
+    solicitud: SolicitudLeaseCalibracionVision,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> RespuestaLeaseCalibracionVision:
+    _escribir_headers_privados(response)
+    _exigir_mismo_origen(request, get_settings())
+    try:
+        renovar_lease(
+            db,
+            token_sesion_hash=hash_token_sesion(_obtener_token_sesion(request)),
+            editor_instance_id=solicitud.editor_instance_id,
+        )
+    except VisionCalibracionLeaseError as error:
+        _denegar(status.HTTP_409_CONFLICT, str(error))
+    except SQLAlchemyError:
+        db.rollback()
+        _denegar(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
+    return RespuestaLeaseCalibracionVision(
+        lease_duration_seconds=DURACION_LEASE_SEGUNDOS,
+    )
+
+
+@router.post(
+    "/calibration-lease/release",
+    response_model=RespuestaLiberacionLeaseCalibracionVision,
+    dependencies=[Depends(exigir_owner)],
+)
+def liberar_lease_calibracion_vision(
+    solicitud: SolicitudLeaseCalibracionVision,
+    request: Request,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> RespuestaLiberacionLeaseCalibracionVision:
+    _escribir_headers_privados(response)
+    _exigir_mismo_origen(request, get_settings())
+    try:
+        liberado = liberar_lease(
+            db,
+            token_sesion_hash=hash_token_sesion(_obtener_token_sesion(request)),
+            editor_instance_id=solicitud.editor_instance_id,
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        _denegar(status.HTTP_500_INTERNAL_SERVER_ERROR, "Error interno")
+    return RespuestaLiberacionLeaseCalibracionVision(released=liberado)
 
 
 @router.get(
@@ -327,11 +448,27 @@ def guardar_configuracion_vision_owner(
     request: Request,
     response: Response,
     db: Annotated[Session, Depends(get_db)],
+    editor_instance_id: Annotated[
+        UUID | None,
+        Header(alias="X-Vision-Editor-Instance"),
+    ] = None,
 ) -> RespuestaConfiguracionVision:
     _escribir_headers_privados(response)
     _exigir_mismo_origen(request, get_settings())
+    if editor_instance_id is None:
+        _denegar(
+            status.HTTP_409_CONFLICT,
+            "Se requiere el lease activo del editor de calibración.",
+        )
     try:
-        resultado = guardar_configuracion_vision(db, solicitud)
+        resultado = guardar_configuracion_vision(
+            db,
+            solicitud,
+            token_sesion_hash=hash_token_sesion(_obtener_token_sesion(request)),
+            editor_instance_id=editor_instance_id,
+        )
+    except VisionCalibracionLeaseError as error:
+        _denegar(status.HTTP_409_CONFLICT, str(error))
     except VisionConflictoError as error:
         _denegar(status.HTTP_409_CONFLICT, str(error))
     except VisionConfiguracionError as error:

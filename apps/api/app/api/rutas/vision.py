@@ -26,6 +26,7 @@ from app.servicios.vision import (
     recibir_heartbeat_vision,
     recibir_observaciones_vision,
 )
+from app.servicios.vision_calibration_lease import VisionCalibracionLeaseError
 
 RUTA_VISION = "/api/vision"
 router = APIRouter(
@@ -46,7 +47,7 @@ def _error_interno() -> NoReturn:
 def _traducir_error(error: ValueError) -> NoReturn:
     codigo = (
         status.HTTP_409_CONFLICT
-        if isinstance(error, VisionConflictoError)
+        if isinstance(error, (VisionConflictoError, VisionCalibracionLeaseError))
         else status.HTTP_422_UNPROCESSABLE_CONTENT
     )
     raise HTTPException(
@@ -81,7 +82,11 @@ def guardar_configuracion(
     response.headers.update(CABECERA_NO_CACHE)
     try:
         resultado = guardar_configuracion_vision(db, solicitud)
-    except (VisionConflictoError, VisionConfiguracionError) as error:
+    except (
+        VisionConflictoError,
+        VisionConfiguracionError,
+        VisionCalibracionLeaseError,
+    ) as error:
         _traducir_error(error)
     except SQLAlchemyError:
         db.rollback()

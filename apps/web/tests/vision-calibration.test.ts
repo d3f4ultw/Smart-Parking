@@ -31,13 +31,6 @@ import {
   abrirEditorVision,
   urlEditorVision,
 } from '../app/utils/vision-zone-actions.ts'
-import {
-  VIGENCIA_RESERVA_EDITOR_MS,
-  claveReservaEditorVision,
-  editorVisionYaAbierto,
-  guardarReservaEditorVision,
-  liberarReservaEditorVision,
-} from '../app/utils/vision-editor-tabs.ts'
 
 test('maps normalized points inside a letterboxed image and rejects clicks in the bars', () => {
   const bounds = { left: 20, top: 10, width: 800, height: 800 } as DOMRect
@@ -177,7 +170,7 @@ test('keeps the raw MJPEG subscription while source freshness catches up after a
   assert.match(editor, /const camaraVigente = puedeMantenerStreamCrudoVision\(estado\)/)
   assert.match(editor, /camaraConfigurada\.value = camaraVigente/)
   assert.match(editor, /frameFuenteFresco\.value = camaraVigente && estado\.frame_fresh/)
-  assert.match(editor, /watch\(\[\(\) => vision\.autorizado\.value, camaraConfigurada\]/)
+  assert.match(editor, /watch\(\[\(\) => vision\.autorizado\.value, camaraConfigurada, leaseListo\]/)
   assert.doesNotMatch(editor, /watch\(\[\(\) => vision\.autorizado\.value, fuenteConectada\]/)
 })
 
@@ -247,23 +240,24 @@ test('opens create/edit editors in a new protected-route tab', () => {
   ]])
 })
 
-test('prevents duplicate editor tabs with a short, instance-owned lease', () => {
-  const records = new Map<string, string>()
-  const storage = {
-    getItem: (key: string) => records.get(key) ?? null,
-    setItem: (key: string, value: string) => { records.set(key, value) },
-    removeItem: (key: string) => { records.delete(key) },
-  }
-  const key = claveReservaEditorVision('zone-1')
-  assert.equal(editorVisionYaAbierto(storage, key, 1000), false)
-  guardarReservaEditorVision(storage, key, 'editor-one', 1000)
-  assert.equal(editorVisionYaAbierto(storage, key, 1001), true)
-  liberarReservaEditorVision(storage, key, 'different-editor')
-  assert.equal(editorVisionYaAbierto(storage, key, 1002), true)
-  liberarReservaEditorVision(storage, key, 'editor-one')
-  assert.equal(editorVisionYaAbierto(storage, key, 1003), false)
-  guardarReservaEditorVision(storage, key, 'stale-editor', 1000)
-  assert.equal(editorVisionYaAbierto(storage, key, 1000 + VIGENCIA_RESERVA_EDITOR_MS), false)
+test('uses PostgreSQL lease availability for every Vision calibration entry action', () => {
+  const administration = readFileSync(new URL('../app/pages/admin/vision/zonas.vue', import.meta.url), 'utf8')
+  assert.match(administration, /\/api\/admin\/vision\/calibration-lease/)
+  assert.match(administration, /leaseDisponible !== true/)
+  assert.match(administration, /Calibración en uso/)
+  assert.equal((administration.match(/>Abrir calibración<\/button>/g) ?? []).length, 2)
+  assert.doesNotMatch(administration, /class="[^"]*primary-button[^"]*"[^>]*>Nuevo cajón<\/button>/)
+  assert.doesNotMatch(administration, /localStorage|sessionStorage/)
+})
+
+test('starts calibration neutral and requires explicit selection or drawing activation', () => {
+  const editor = readFileSync(new URL('../app/pages/admin/vision/calibracion/editor.vue', import.meta.url), 'utf8')
+  assert.match(editor, /const puntosPendientes = ref<PuntoNormalizado\[]>\(\[\]\)/)
+  assert.match(editor, /const dibujando = ref\(false\)/)
+  assert.match(editor, /function iniciarDibujo\(\)[\s\S]*?dibujando\.value = true/)
+  assert.match(editor, /function cargarCanonico\([\s\S]*?zoneIdObjetivo\.value/)
+  assert.doesNotMatch(editor, /mode === 'create'[\s\S]{0,160}dibujando\.value = true/)
+  assert.match(editor, />＋ Nuevo cajón<\/button>/)
 })
 
 test('keeps administration stream-free and protects the fullscreen editor lifecycle', () => {
@@ -279,6 +273,12 @@ test('keeps administration stream-free and protects the fullscreen editor lifecy
   assert.equal(editor.includes('monitor/stream?tipo=raw'), true)
   assert.equal(editor.includes('await streamMjpeg.detener()'), true)
   assert.equal(editor.includes('onBeforeUnmount(() =>'), true)
+  assert.match(editor, /const leaseListo = computed\(\(\) => leaseVigente\.value && leaseComprobado\.value\)/)
+  assert.match(editor, /manejadorPaginaOculta = \(evento\) => \{[\s\S]*?liberacionBFCache = lease\.liberarAlSalir\(\)/)
+  assert.match(editor, /if \(!evento\.persisted \|\| !vision\.autorizado\.value\) return/)
+  assert.match(editor, /if \(liberacionBFCache !== null\) await liberacionBFCache/)
+  assert.match(editor, /await iniciarEditorConLease\(instancia\)/)
+  assert.match(editor, /if \(leaseVigente\.value\) \{[\s\S]*?await lease\.liberar\(\)/)
 })
 
 test('uses in-app confirmations and notifications in calibration without browser popups', () => {
@@ -298,8 +298,9 @@ test('keeps finish and save together and lets save finalize a valid drawing', ()
   assert.doesNotMatch(editor, /!poligonosValidos\.value \|\| guardando\.value \|\| dibujando\.value/)
   assert.match(editor, /id="editor-guidance"/)
   assert.match(administration, /Cajones registrados/)
-  assert.match(administration, /Cámara solo al editar/)
-  assert.match(administration, /Nuevo cajón/)
+  assert.match(administration, /La cámara se activa al abrir el editor/)
+  assert.match(administration, /Abrir calibración/)
+  assert.doesNotMatch(administration, /<button[^>]*>\s*Nuevo cajón\s*<\/button>/)
   assert.doesNotMatch(administration, /revisión \{\{ configuracion\?\.revision/)
 })
 
@@ -355,7 +356,7 @@ test('bounds Vision authorization checks and exposes a retryable error state', (
   assert.match(authorization, /timeout:\s*10_000/)
   assert.match(authorization, /state:\s*'error'/)
   assert.match(authorization, /codigoHttp\(error\) === 401[\s\S]*?navigateTo\('\/login'/)
-  assert.match(gate, /Reintentar verificación/)
+  assert.match(gate, /Intentar de nuevo/)
   assert.match(gate, /state === 'error'/)
 })
 

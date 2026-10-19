@@ -28,6 +28,7 @@ from app.models import (
     Sesion,
     SesionGestionPropietario,
     Usuario,
+    VisionCalibrationLease,
     VisionConfiguration,
     VisionRequest,
 )
@@ -144,6 +145,12 @@ def db(database_url: URL) -> Generator[Session]:
     configuracion = session.get(VisionConfiguration, 1)
     if configuracion is None:
         raise RuntimeError("La migracion no creo la configuracion de Vision.")
+    lease_calibracion = session.get(VisionCalibrationLease, 1)
+    if lease_calibracion is None:
+        raise RuntimeError("La migracion no creo el lease de calibracion Vision.")
+    lease_calibracion.owner_session_hash = None
+    lease_calibracion.editor_instance_id = None
+    lease_calibracion.expires_at = None
     session.execute(delete(Cajon))
     session.execute(delete(VisionRequest))
     configuracion.revision = 0
@@ -190,6 +197,15 @@ def db(database_url: URL) -> Generator[Session]:
                 last_heartbeat_at=None,
                 last_observation_at=None,
                 last_sequence=0,
+            )
+        )
+        session.execute(
+            update(VisionCalibrationLease)
+            .where(VisionCalibrationLease.id == 1)
+            .values(
+                owner_session_hash=None,
+                editor_instance_id=None,
+                expires_at=None,
             )
         )
         session.execute(

@@ -1,0 +1,174 @@
+# Plantilla para desarrollo local: copia este archivo como infra/compose.dev.yml.
+# Completa las variables requeridas en el .env de la raiz a partir de .env.example.
+# Requeridas: POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD, ACTIVATION_TOKEN_TTL_HOURS,
+# ACTIVATION_CHALLENGE_TTL_MINUTES y VISION_BEARER_TOKEN. Genera secretos propios; no los compartas.
+# SMTP_PASSWORD y SMTP_USERNAME solo se requieren si sustituyes Mailpit por un SMTP externo.
+# Los puertos publicados usan 127.0.0.1. Si alguno esta ocupado, cambia solo el puerto del host:
+# 8025->8026 (Mailpit), 3000->3001 (Web), 8000->8001 (API), 5432->5433 (PostgreSQL).
+# Conserva 127.0.0.1 para no exponer los servicios en la red local.
+# Vision queda en simulacion por defecto. Para camara real, configura camera y VISION_SOURCE_URL en .env.
+
+name: smart-parking
+
+services:
+  mailpit:
+    container_name: mailpit
+    image: axllent/mailpit:v1.31.3
+    ports:
+      - "127.0.0.1:8025:8025"
+    networks:
+      - development
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  web-dev:
+    container_name: web-dev
+    build:
+      context: .
+      dockerfile: infra/web/Containerfile.dev
+    working_dir: /app
+    command: ["sh", "-c", "pnpm install --frozen-lockfile && pnpm exec nuxt dev --host 0.0.0.0 --port 3000"]
+    environment:
+      NODE_ENV: "development"
+      HOST: 0.0.0.0
+      NUXT_HOST: 0.0.0.0
+      NUXT_API_INTERNAL_BASE_URL: "${NUXT_API_INTERNAL_BASE_URL:-http://api-dev:8000}"
+      NUXT_PUBLIC_MANAGEMENT_ORIGIN: "${APP_PUBLIC_URL:-http://localhost:3000}"
+      NUXT_SESSION_COOKIE_NAME: "${SESSION_COOKIE_NAME:-smart_parking_session}"
+      CHOKIDAR_USEPOLLING: "true"
+    # Solo loopback en Windows/WSL; evita exponer el servicio en otras interfaces.
+    # Cambiar a 0.0.0.0 requiere revalidar el forwarding localhost de Windows/Podman.
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+      - web_nuxt:/app/.nuxt
+    networks:
+      - development
+
+  api-dev:
+    container_name: api-dev
+    build:
+      context: .
+      dockerfile: infra/api/Containerfile.dev
+    working_dir: /app
+    command: ["sh", "-c", "uv sync --locked && exec uv run --no-sync uvicorn main:app --host 0.0.0.0 --port 8000 --reload --timeout-graceful-shutdown 3"]
+    environment:
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: "${POSTGRES_DB:?Set POSTGRES_DB in the root .env}"
+      DATABASE_USER: "${POSTGRES_USER:?Set POSTGRES_USER in the root .env}"
+      DATABASE_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}"
+      APP_ENVIRONMENT: "${APP_ENVIRONMENT:-development}"
+      APP_PUBLIC_URL: "${APP_PUBLIC_URL:-http://localhost:3000}"
+      SESSION_COOKIE_NAME: "${SESSION_COOKIE_NAME:-smart_parking_session}"
+      SESSION_DURATION_MINUTES: "${SESSION_DURATION_MINUTES:-480}"
+      ACTIVACION_REENVIO_COOLDOWN_SEGUNDOS: "${ACTIVACION_REENVIO_COOLDOWN_SEGUNDOS:-60}"
+      ACTIVATION_TOKEN_TTL_HOURS: "${ACTIVATION_TOKEN_TTL_HOURS:?Set ACTIVATION_TOKEN_TTL_HOURS in the root .env}"
+      ACTIVATION_CHALLENGE_TTL_MINUTES: "${ACTIVATION_CHALLENGE_TTL_MINUTES:?Set ACTIVATION_CHALLENGE_TTL_MINUTES in the root .env}"
+      VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:?Set VISION_BEARER_TOKEN in the root .env}"
+      VISION_REFERENCE_FRAME_PATH: /var/lib/smart-parking-vision/parking_test_reference.png
+      VISION_SOURCE_MODE: "${VISION_SOURCE_MODE:-simulation}"
+      CORREO_TRANSPORTE: "${CORREO_TRANSPORTE:-smtp}"
+      SMTP_HOST: "${SMTP_HOST:-mailpit}"
+      SMTP_PORT: "${SMTP_PORT:-1025}"
+      SMTP_USERNAME: "${SMTP_USERNAME:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM_EMAIL: "${SMTP_FROM_EMAIL:-no-reply@example.test}"
+      SMTP_FROM_NAME: "${SMTP_FROM_NAME:-Smart Parking}"
+      SMTP_SECURITY: "${SMTP_SECURITY:-none}"
+      SMTP_TIMEOUT_SECONDS: "${SMTP_TIMEOUT_SECONDS:-10}"
+    # Solo loopback en Windows/WSL; evita exponer el servicio en otras interfaces.
+    # Cambiar a 0.0.0.0 requiere revalidar el forwarding localhost de Windows/Podman.
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./apps/api:/app
+      - ./apps/vision/parking_test_reference.png:/var/lib/smart-parking-vision/parking_test_reference.png:ro
+    networks:
+      - development
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+# Optional profile: use --profile vision only when you need the Vision container.
+# For a physical camera, set VISION_SOURCE_MODE=camera in the root .env.
+# Set VISION_SOURCE_URL there to a reachable HTTP camera endpoint.
+# The default host.containers.internal:4747/video is suitable only when that endpoint exists on this host.
+# Place a compatible yolo26n.pt model in apps/vision/models/ before starting this profile.
+  vision-dev:
+    profiles: ["vision"]
+    container_name: vision-dev
+    build:
+      context: .
+      dockerfile: apps/vision/Containerfile.dev
+    command: []
+    environment:
+      VISION_API_BASE_URL: "http://api-dev:8000"
+      VISION_BEARER_TOKEN: "${VISION_BEARER_TOKEN:?Set VISION_BEARER_TOKEN in the root .env}"
+      VISION_STATE_PATH: /var/lib/smart-parking-vision
+      VISION_MODEL_PATH: /opt/models/yolo26n.pt
+      VISION_SOURCE_MODE: "${VISION_SOURCE_MODE:-simulation}"
+      VISION_SOURCE_URL: "${VISION_SOURCE_URL:-http://host.containers.internal:4747/video}"
+      VISION_SIMULATION_DIR: /app/vision/simulations
+      VISION_FRAME_DURATION_SECONDS: "${VISION_FRAME_DURATION_SECONDS:-15}"
+      VISION_INFERENCE_FPS: "${VISION_INFERENCE_FPS:-25}"
+      VISION_DISPLAY_FPS: "${VISION_DISPLAY_FPS:-25}"
+      VISION_TORCH_NUM_THREADS: "${VISION_TORCH_NUM_THREADS:-3}"
+      VISION_TORCH_NUM_INTEROP_THREADS: "${VISION_TORCH_NUM_INTEROP_THREADS:-1}"
+      VISION_OPENCV_NUM_THREADS: "${VISION_OPENCV_NUM_THREADS:-1}"
+      VISION_DISPLAY_MAX_DIMENSION: "960"
+      VISION_FRAME_JPEG_QUALITY: "75"
+      VISION_FRAME_MAX_BYTES: "1048576"
+      VISION_IMAGE_SIZE: "640"
+      VISION_API_TIMEOUT_SECONDS: "2"
+    volumes:
+      - vision_state:/var/lib/smart-parking-vision
+      - ./apps/vision/models:/opt/models:ro
+      - ./apps/vision/simulations:/app/vision/simulations:ro
+    networks:
+      - development
+    depends_on:
+      - api-dev
+
+  # This named volume persists PostgreSQL data across restarts. Do not use down -v if you need it.
+  # When reusing postgres_data, POSTGRES_DB/USER/PASSWORD must match the existing database.
+  postgres:
+    container_name: postgres
+    image: postgres:18.6
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:?Set POSTGRES_DB in the root .env}"
+      POSTGRES_USER: "${POSTGRES_USER:?Set POSTGRES_USER in the root .env}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the root .env}"
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - development
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+networks:
+  development:
+    name: smart-parking-development
+
+volumes:
+  postgres_data:
+    name: postgres_data
+  web_node_modules:
+    name: web_node_modules
+  web_nuxt:
+    name: web_nuxt
+  vision_state:
+    name: smart-parking-vision-state

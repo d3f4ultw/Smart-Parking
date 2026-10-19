@@ -129,6 +129,7 @@ export async function proxyAdminVisionRequest(
   ruta: string,
   metodo: MetodoVision = 'GET',
   tipoRespuesta: TipoRespuestaVision = 'json',
+  opciones: { abortOnClientDisconnect?: boolean } = {},
 ) {
   establecerNoCache(event)
   const config = useRuntimeConfig(event)
@@ -141,6 +142,15 @@ export async function proxyAdminVisionRequest(
   })
   if (escritura) {
     headers.set('origin', exigirOrigen(event, config.public.managementOrigin))
+  }
+  if (metodo === 'PUT' && ruta === 'configuration') {
+    const editorInstance = getRequestHeader(event, 'x-vision-editor-instance')
+    if (editorInstance !== undefined) {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(editorInstance)) {
+        throw createError({ statusCode: 400, statusMessage: 'Invalid editor instance' })
+      }
+      headers.set('x-vision-editor-instance', editorInstance)
+    }
   }
 
   let body: string | undefined
@@ -160,8 +170,10 @@ export async function proxyAdminVisionRequest(
     event.node.req.removeListener('aborted', abortar)
     respuestaNode.removeListener('close', cerrar)
   }
-  event.node.req.once('aborted', abortar)
-  respuestaNode.once('close', abortar)
+  if (opciones.abortOnClientDisconnect !== false) {
+    event.node.req.once('aborted', abortar)
+    respuestaNode.once('close', abortar)
+  }
 
   try {
     const upstream = await fetch(`${apiBaseUrl}/api/admin/vision/${ruta}`, {
@@ -213,6 +225,6 @@ export async function proxyAdminVisionRequest(
     }
     throw createError({ statusCode: 502, statusMessage: 'Vision API unavailable' })
   } finally {
-    cerrar()
+    if (opciones.abortOnClientDisconnect !== false) cerrar()
   }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, computed, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, computed, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { colorVisionZona, estiloVisionZona } from '~/utils/vision-zone-colors'
 import {
@@ -7,7 +7,6 @@ import {
   esCambioConfiguracionRemoto,
   notificarCambioConfiguracionVision,
 } from '~/utils/vision-config-sync'
-import { claveReservaEditorVision, guardarReservaEditorVision, liberarReservaEditorVision } from '~/utils/vision-editor-tabs'
 import type {
   RespuestaConfiguracionVision,
   ZonaVisionBorrador,
@@ -30,6 +29,9 @@ import {
 
 definePageMeta({ layout: 'vision-editor', middleware: 'sesion-owner' })
 
+const CLAVE_INSTANCIA_EDITOR_VISION = 'smart-parking:vision-calibration-editor-instance'
+const FORMATO_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
 type EstadoBorrador = {
   zonas: ZonaVisionBorrador[]
   puntosPendientes: PuntoNormalizado[]
@@ -46,9 +48,14 @@ type ConfirmacionEditor = {
 
 const { mostrarToast } = useAdminToasts()
 const vision = useVisionAuthorization()
+const visionAutorizado = vision.autorizado
 const route = useRoute()
-const modoCreacion = computed(() => route.query.mode === 'create')
-const creacionCompletada = ref(false)
+const lease = useVisionCalibrationLease(perderAccesoLease)
+const leaseVigente = lease.vigente
+const estadoLease = lease.estado
+const instanciaEditorLease = lease.editorInstanceId
+const leaseComprobado = ref(false)
+const leaseListo = computed(() => leaseVigente.value && leaseComprobado.value)
 const zoneIdObjetivo = computed(() => typeof route.query.zoneId === 'string' ? route.query.zoneId : null)
 const fetchVision = $fetch.create({
   credentials: 'same-origin',
@@ -97,6 +104,14 @@ const textoOperacion = computed(() =>
       : 'Guardando cambios…',
 )
 const error = ref('')
+const mensajeEstadoLease = computed(() => {
+  if (estadoLease.value === 'vigente') return 'Verificando que la calibración siga activa…'
+  if (estadoLease.value === 'adquiriendo') return 'Comprobando el acceso exclusivo a la calibración…'
+  if (estadoLease.value === 'ocupado') return 'Calibración en uso. Vuelve a intentarlo cuando el editor actual se cierre.'
+  if (estadoLease.value === 'perdido') return error.value || 'El acceso exclusivo expiró. Cierra y vuelve a abrir el editor.'
+  if (estadoLease.value === 'error') return error.value || 'No se pudo comprobar el acceso exclusivo.'
+  return 'Se requiere autorización OWNER para abrir la calibración.'
+})
 const mensaje = ref('')
 const conflicto = ref(false)
 const revisionObjetivo = ref<number | null>(null)
@@ -117,12 +132,14 @@ const transformacionCss = computed(() =>
 let indiceHistorialDibujo = 0
 let temporizadorFuente: number | null = null
 let solicitudEstadoFuenteEnCurso = false
+let inicioEditorEnCurso: Promise<void> | null = null
 let antesDeSalir: ((evento: BeforeUnloadEvent) => void) | null = null
 let permitirCerrarEditor = false
-let inicioCreacionSolicitado = false
+let manejadorPaginaOculta: ((evento: PageTransitionEvent) => void) | null = null
+let manejadorPaginaMostrada: ((evento: PageTransitionEvent) => void) | null = null
+let liberacionBFCache: Promise<boolean> | null = null
+let manejadorVisibilidad: (() => void) | null = null
 let instanciaEditor = ''
-let claveEditor = ''
-let temporizadorReservaEditor: number | null = null
 let detenerEscuchaConfiguracion: (() => void) | null = null
 let manejadorEnfoque: (() => void) | null = null
 let arrastreCanvas: { punteroId: number; inicioX: number; inicioY: number; trasladoX: number; trasladoY: number } | null = null
@@ -140,7 +157,6 @@ const zonaSeleccionadaActual = computed(() =>
   zonas.value.find((zona) => zona.vision_zone_id === zonaSeleccionada.value) ?? null,
 )
 const modoEdicion = computed(() => {
-  if (modoCreacion.value && !creacionCompletada.value) return 'Nuevo cajón C' + (configCanonica.value?.next_c_number ?? '—')
   if (zonaSeleccionadaActual.value?.numero === null) return 'Nuevo cajón en borrador'
   if (zonaSeleccionadaActual.value?.numero) return 'Editando C' + zonaSeleccionadaActual.value.numero
   return 'Selecciona un cajón'
@@ -167,8 +183,8 @@ const mensajeGuiado = computed(() => {
   }
   if (arrastre.value !== null) return 'Suelta el punto para ajustar el cajón.'
   if (zonaSeleccionadaActual.value !== null) return 'Arrastra los puntos para ajustar el cajón. Usa las flechas del teclado para mover un punto seleccionado.'
-  if (zonas.value.length === 0) return 'Selecciona “Nuevo cajón” y marca los puntos sobre la imagen.'
-  return 'Selecciona un cajón para editar.'
+  if (zonas.value.length === 0) return 'Selecciona “Nuevo cajón” para comenzar a dibujar.'
+  return 'Selecciona un cajón para editar o elige “Nuevo cajón”.'
 })
 const etiquetaFlujo = computed(() => {
   if (estadoFlujo.value === 'sin-senal') return 'SIN SEÑAL'
@@ -311,15 +327,17 @@ function limpiarDatos() {
   revisionObjetivo.value = null
   revisionAplicada.value = null
   estadoGuardado.value = 'editando'
+  leaseComprobado.value = false
 }
 
 async function cargarCanonico(solicitarImagen = true) {
-  if (!vision.autorizado.value) return
+  if (!vision.autorizado.value || !leaseListo.value) return
   cargando.value = true
   error.value = ''
   mensaje.value = ''
   try {
     const respuesta = await fetchVision<RespuestaConfiguracionVision>('/api/admin/vision/configuration')
+    if (!leaseListo.value) return
     configCanonica.value = respuesta
     zonas.value = respuesta.zones.map((zona) => ({
       vision_zone_id: zona.vision_zone_id,
@@ -328,18 +346,16 @@ async function cargarCanonico(solicitarImagen = true) {
     }))
     puntosPendientes.value = []
     const zonaObjetivo = zonas.value.find(zona => zona.vision_zone_id === zoneIdObjetivo.value)
-    zonaSeleccionada.value = modoCreacion.value && !creacionCompletada.value
-      ? null
-      : zoneIdObjetivo.value
-        ? zonaObjetivo?.vision_zone_id ?? null
-        : zonas.value[0]?.vision_zone_id ?? null
+    zonaSeleccionada.value = zoneIdObjetivo.value
+      ? zonaObjetivo?.vision_zone_id ?? null
+      : null
     if (zoneIdObjetivo.value && zonaObjetivo === undefined) {
       error.value = 'El cajón ya no está activo. Regresa a la lista y selecciona otro.'
     }
     historial.value = []
     conflicto.value = false
     idempotencia.value = null
-    if (solicitarImagen && camaraConfigurada.value) streamMjpeg.iniciar()
+    if (solicitarImagen && camaraConfigurada.value && leaseListo.value) streamMjpeg.iniciar()
   } catch (fallo: unknown) {
     error.value = 'No se pudo cargar la configuración protegida. Vuelve a intentarlo.'
     await vision.manejarErrorProtegido(fallo)
@@ -349,7 +365,7 @@ async function cargarCanonico(solicitarImagen = true) {
 }
 
 async function cargarEstadoFuente() {
-  if (!vision.autorizado.value || solicitudEstadoFuenteEnCurso) return
+  if (!vision.autorizado.value || !leaseListo.value || solicitudEstadoFuenteEnCurso) return
   solicitudEstadoFuenteEnCurso = true
   try {
     const estado = await fetchVision<{
@@ -495,7 +511,7 @@ function terminarPan(evento: PointerEvent) {
 }
 
 function iniciarDibujo() {
-  if (guardando.value || !imagenLista.value) return
+  if (!leaseListo.value || guardando.value || !imagenLista.value) return
   indiceHistorialDibujo = historial.value.length
   registrarUndo()
   puntosPendientes.value = []
@@ -529,7 +545,7 @@ function obtenerPunto(evento: PointerEvent | MouseEvent): PuntoNormalizado | nul
 }
 
 function agregarVertice(evento: MouseEvent) {
-  if (!dibujando.value) return
+  if (!leaseListo.value || !dibujando.value) return
   const punto = obtenerPunto(evento)
   if (punto === null) return
   const siguientes = agregarPuntoPoligono(puntosPendientes.value, punto)
@@ -543,6 +559,7 @@ function agregarVertice(evento: MouseEvent) {
 }
 
 function incorporarDibujo(): boolean {
+  if (!leaseListo.value) return false
   const motivo = motivoPoligonoInvalido(puntosPendientes.value)
   if (motivo !== null) {
     error.value = motivo
@@ -572,7 +589,7 @@ function seleccionarZona(id: string) {
 }
 
 function iniciarArrastre(evento: PointerEvent) {
-  if (guardando.value || !imagenLista.value) return
+  if (!leaseListo.value || guardando.value || !imagenLista.value) return
   const destino = evento.target
   if (!(destino instanceof SVGEllipseElement) || !destino.classList.contains('vertex-hit-target') || dibujando.value) return
   const zonaId = destino.dataset.zoneId
@@ -587,7 +604,7 @@ function iniciarArrastre(evento: PointerEvent) {
 }
 
 function moverVertice(evento: PointerEvent) {
-  if (guardando.value || !imagenLista.value) return
+  if (!leaseListo.value || guardando.value || !imagenLista.value) return
   const activo = arrastre.value
   if (activo === null || activo.punteroId !== evento.pointerId) return
   const punto = obtenerPunto(evento)
@@ -600,7 +617,7 @@ function moverVertice(evento: PointerEvent) {
 }
 
 function moverVerticeConTeclado(evento: KeyboardEvent, zonaId: string, indice: number) {
-  if (guardando.value || !imagenLista.value) return
+  if (!leaseListo.value || guardando.value || !imagenLista.value) return
   if (evento.key === 'Enter' || evento.key === ' ') {
     evento.preventDefault()
     seleccionarZona(zonaId)
@@ -637,7 +654,7 @@ function terminarArrastre() {
 }
 
 async function borrarZona(zona: ZonaVisionBorrador) {
-  if (guardando.value) return
+  if (!leaseListo.value || guardando.value) return
   const etiqueta = zona.numero === null ? 'este cajón nuevo' : `el cajón C${zona.numero}`
   if (!(await confirmarEnEditor({
     titulo: 'Quitar cajón del borrador',
@@ -685,7 +702,7 @@ function estadoHttp(errorHttp: unknown) {
 }
 
 async function guardarCambios() {
-  if (configCanonica.value === null || guardando.value || cargando.value) return
+  if (!leaseListo.value || configCanonica.value === null || guardando.value || cargando.value) return
   if (dibujando.value && !incorporarDibujo()) return
   if (!hayCambios.value) return
   const zonaInvalida = zonas.value.find(zona => !validarPoligono(zona.polygon))
@@ -718,6 +735,9 @@ async function guardarCambios() {
       '/api/admin/vision/configuration',
       {
         method: 'PUT',
+        headers: {
+          'X-Vision-Editor-Instance': instanciaEditorLease.value ?? '',
+        },
         body: {
           request_id: idempotencia.value.requestId,
           expected_revision: revision,
@@ -756,15 +776,16 @@ async function guardarCambios() {
         : 'Actualizando el estacionamiento…',
       estadoGuardado.value === 'listo' ? 'success' : 'warning',
     )
-    if (modoCreacion.value) creacionCompletada.value = true
     notificarCambioConfiguracionVision(instanciaEditor)
     void cargarEstadoFuente()
   } catch (fallo: unknown) {
     estadoGuardado.value = 'error'
     const codigo = estadoHttp(fallo)
     if (codigo === 409) {
-      conflicto.value = true
-      error.value = 'La configuración cambió en otra pestaña. Tu borrador sigue aquí; recarga la configuración cuando estés lista.'
+      if (await lease.renovar()) {
+        conflicto.value = true
+        error.value = 'La configuración cambió en otra pestaña. Tu borrador sigue aquí; recarga la configuración cuando estés lista.'
+      }
     } else if (codigo === 422) {
       error.value = 'No se pudo guardar el cajón. Revisa que los puntos estén dentro de la imagen y que los lados no se crucen.'
     } else {
@@ -778,7 +799,7 @@ async function guardarCambios() {
 }
 
 async function revisarConfiguracionRemota() {
-  if (!vision.autorizado.value || configCanonica.value === null) return
+  if (!vision.autorizado.value || !leaseListo.value || configCanonica.value === null) return
   try {
     const remota = await fetchVision<RespuestaConfiguracionVision>('/api/admin/vision/configuration')
     if (remota.revision === configCanonica.value.revision) return
@@ -793,6 +814,83 @@ async function revisarConfiguracionRemota() {
   }
 }
 
+function perderAccesoLease(fallo: unknown) {
+  const codigo = estadoHttp(fallo)
+  limpiarDatos()
+  error.value = codigo === 409
+    ? 'Se perdió el acceso exclusivo. Cierra este editor y vuelve a abrir la calibración.'
+    : 'Se perdió la autorización de calibración. Vuelve a verificar tu sesión OWNER.'
+  mostrarToast(error.value, 'error')
+  if (codigo === 401 || codigo === 403) void vision.manejarErrorProtegido(fallo)
+}
+
+function crearInstanciaDeNavegacion(): string {
+  let instancia: string | null = null
+  try {
+    const navegacion = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
+    if (navegacion?.type === 'reload') {
+      const guardada = window.sessionStorage.getItem(CLAVE_INSTANCIA_EDITOR_VISION)
+      if (guardada !== null && FORMATO_UUID.test(guardada)) instancia = guardada
+    }
+  } catch {
+    // La continuidad tras una recarga es opcional; el servidor sigue siendo la autoridad.
+  }
+  instancia ??= crypto.randomUUID()
+  try {
+    window.sessionStorage.setItem(CLAVE_INSTANCIA_EDITOR_VISION, instancia)
+  } catch {
+    // Sin almacenamiento de pestaña, una recarga nueva espera a que expire el lease anterior.
+  }
+  return instancia
+}
+
+function reintentarAccesoLease() {
+  if (!vision.autorizado.value) return
+  const instancia = crypto.randomUUID()
+  try {
+    window.sessionStorage.setItem(CLAVE_INSTANCIA_EDITOR_VISION, instancia)
+  } catch {
+    // La identidad del lease permanece en memoria y en PostgreSQL.
+  }
+  void iniciarEditorConLease(instancia)
+}
+
+function volverAListaCajones() {
+  void navigateTo('/admin/vision/zonas')
+}
+
+async function iniciarEditorConLease(instanciaSolicitada?: string): Promise<void> {
+  if (!import.meta.client || !vision.autorizado.value) return
+  if (inicioEditorEnCurso !== null) return inicioEditorEnCurso
+
+  inicioEditorEnCurso = (async () => {
+    const instancia = instanciaSolicitada ?? crearInstanciaDeNavegacion()
+    instanciaEditor = instancia
+    const adquirido = await lease.adquirir({ editorInstanceId: instancia })
+    if (!adquirido) {
+      if (estadoLease.value === 'ocupado') {
+        error.value = 'Calibración en uso. Regresa a Cajones del estacionamiento y vuelve a intentarlo cuando esté disponible.'
+      } else if (estadoLease.value === 'perdido') {
+        error.value = 'Esta instancia perdió el lease. Cierra y vuelve a abrir el editor.'
+      } else if (estadoLease.value === 'error') {
+        error.value = 'No se pudo comprobar el acceso exclusivo. Vuelve a intentarlo.'
+      }
+      return
+    }
+    if (!vision.autorizado.value || !leaseVigente.value) return
+
+    leaseComprobado.value = true
+    error.value = ''
+    await Promise.allSettled([cargarCanonico(), cargarEstadoFuente()])
+    if (leaseVigente.value && temporizadorFuente === null) {
+      temporizadorFuente = window.setInterval(() => void cargarEstadoFuente(), 500)
+    }
+  })().finally(() => {
+    inicioEditorEnCurso = null
+  })
+  return inicioEditorEnCurso
+}
+
 async function cerrarEditor() {
   if (guardando.value) return
   if (hayCambios.value && !(await confirmarEnEditor({
@@ -801,6 +899,8 @@ async function cerrarEditor() {
     etiquetaConfirmar: 'Cerrar y descartar',
     peligrosa: true,
   }))) return
+  const liberado = await lease.liberar()
+  if (!liberado) lease.liberarAlSalir()
   await streamMjpeg.detener()
   permitirCerrarEditor = true
   window.close()
@@ -809,36 +909,33 @@ async function cerrarEditor() {
 
 onBeforeRouteLeave(async () => {
   if (!puedeNavegarDuranteGuardado(estadoGuardado.value)) return false
-  if (!vision.autorizado.value || !hayCambios.value || permitirCerrarEditor || !import.meta.client) return true
-  return confirmarEnEditor({
-    titulo: 'Salir del editor',
-    descripcion: 'Hay cambios sin guardar. Se descartarán si sales del editor.',
-    etiquetaConfirmar: 'Salir y descartar',
-    peligrosa: true,
-  })
-})
-
-watch(imagenLista, (lista) => {
-  if (lista && modoCreacion.value && !creacionCompletada.value && !inicioCreacionSolicitado) {
-    inicioCreacionSolicitado = true
-    iniciarDibujo()
+  if (vision.autorizado.value && hayCambios.value && !permitirCerrarEditor && import.meta.client) {
+    const confirmado = await confirmarEnEditor({
+      titulo: 'Salir del editor',
+      descripcion: 'Hay cambios sin guardar. Se descartarán si sales del editor.',
+      etiquetaConfirmar: 'Salir y descartar',
+      peligrosa: true,
+    })
+    if (!confirmado) return false
   }
+  if (leaseVigente.value) {
+    const liberado = await lease.liberar()
+    if (!liberado) lease.liberarAlSalir()
+  }
+  return true
 })
 
 watch(vision.autorizado, (autorizado) => {
   if (!autorizado) {
+    void lease.liberar()
     limpiarDatos()
     return
   }
-  void cargarCanonico()
-  void cargarEstadoFuente()
-  if (import.meta.client && temporizadorFuente === null) {
-    temporizadorFuente = window.setInterval(() => void cargarEstadoFuente(), 500)
-  }
+  void iniciarEditorConLease()
 }, { immediate: true })
 
-watch([() => vision.autorizado.value, camaraConfigurada], ([autorizado, camaraVigente]) => {
-  if (autorizado && camaraVigente) {
+watch([() => vision.autorizado.value, camaraConfigurada, leaseListo], ([autorizado, camaraVigente, leaseActivo]) => {
+  if (autorizado && camaraVigente && leaseActivo) {
     streamMjpeg.iniciar()
   } else {
     void streamMjpeg.detener()
@@ -852,16 +949,43 @@ onMounted(() => {
     evento.returnValue = ''
   }
   window.addEventListener('beforeunload', antesDeSalir)
-  claveEditor = claveReservaEditorVision(zoneIdObjetivo.value ?? undefined)
-  instanciaEditor = crypto.randomUUID()
-  try {
-    guardarReservaEditorVision(window.localStorage, claveEditor, instanciaEditor)
-    temporizadorReservaEditor = window.setInterval(() => {
-      guardarReservaEditorVision(window.localStorage, claveEditor, instanciaEditor)
-    }, 5_000)
-  } catch {
-    temporizadorReservaEditor = null
+  manejadorPaginaOculta = (evento) => {
+    liberacionBFCache = lease.liberarAlSalir()
+    if (evento.persisted) {
+      leaseComprobado.value = false
+    }
   }
+  window.addEventListener('pagehide', manejadorPaginaOculta)
+  manejadorPaginaMostrada = (evento) => {
+    if (!evento.persisted || !vision.autorizado.value) return
+    void (async () => {
+      if (liberacionBFCache !== null) await liberacionBFCache
+      liberacionBFCache = null
+      limpiarDatos()
+      const instancia = instanciaEditorLease.value ?? crypto.randomUUID()
+      try {
+        window.sessionStorage.setItem(CLAVE_INSTANCIA_EDITOR_VISION, instancia)
+      } catch {
+        // El editor podrá reabrirse con una identidad nueva sin almacenamiento de pestaña.
+      }
+      await iniciarEditorConLease(instancia)
+    })()
+  }
+  window.addEventListener('pageshow', manejadorPaginaMostrada)
+  manejadorVisibilidad = () => {
+    if (document.visibilityState === 'hidden') {
+      leaseComprobado.value = false
+      return
+    }
+    if (document.visibilityState !== 'visible' || !leaseVigente.value) return
+    void (async () => {
+      if (await lease.renovar()) {
+        leaseComprobado.value = true
+        await revisarConfiguracionRemota()
+      }
+    })()
+  }
+  document.addEventListener('visibilitychange', manejadorVisibilidad)
   detenerEscuchaConfiguracion = escucharCambioConfiguracionVision((origenMensaje) => {
     if (esCambioConfiguracionRemoto(instanciaEditor, origenMensaje)) {
       void revisarConfiguracionRemota()
@@ -869,21 +993,18 @@ onMounted(() => {
   })
   manejadorEnfoque = () => { void revisarConfiguracionRemota() }
   window.addEventListener('focus', manejadorEnfoque)
+  if (vision.autorizado.value) void iniciarEditorConLease()
 })
 
 onBeforeUnmount(() => {
   if (resolverConfirmacionActiva !== null) resolverDialogoConfirmacion(false)
   if (antesDeSalir !== null) window.removeEventListener('beforeunload', antesDeSalir)
+  if (manejadorVisibilidad !== null) document.removeEventListener('visibilitychange', manejadorVisibilidad)
+  if (manejadorPaginaOculta !== null) window.removeEventListener('pagehide', manejadorPaginaOculta)
+  if (manejadorPaginaMostrada !== null) window.removeEventListener('pageshow', manejadorPaginaMostrada)
   if (manejadorEnfoque !== null) window.removeEventListener('focus', manejadorEnfoque)
-  if (temporizadorReservaEditor !== null) window.clearInterval(temporizadorReservaEditor)
   detenerEscuchaConfiguracion?.()
-  if (claveEditor && instanciaEditor) {
-    try {
-      liberarReservaEditorVision(window.localStorage, claveEditor, instanciaEditor)
-    } catch {
-      // El ciclo de vida del stream sigue liberándose aunque el almacenamiento no esté disponible.
-    }
-  }
+  if (leaseVigente.value) void lease.liberar()
   limpiarDatos()
 })
 </script>
@@ -896,6 +1017,7 @@ onBeforeUnmount(() => {
   >
     <AdminToastNotifications />
     <main
+      v-if="leaseVigente"
       class="editor-page"
       :data-vision-stream-state="streamMjpeg.estado.value"
       :data-vision-stream-received="streamMjpeg.framesRecibidos.value"
@@ -1147,6 +1269,20 @@ onBeforeUnmount(() => {
         </aside>
       </section>
     </main>
+    <main v-else-if="visionAutorizado" class="editor-lease-waiting" role="status" aria-live="polite">
+      <span class="vision-mark" aria-hidden="true">V</span>
+      <h1>{{ estadoLease === 'ocupado' ? 'Calibración en uso' : 'Acceso al editor' }}</h1>
+      <p>{{ mensajeEstadoLease }}</p>
+      <div class="lease-waiting-actions">
+        <button
+          v-if="estadoLease === 'error' || estadoLease === 'perdido'"
+          class="tool-button tool-primary"
+          type="button"
+          @click="reintentarAccesoLease"
+        >Reintentar acceso</button>
+        <button class="tool-button" type="button" @click="volverAListaCajones">Volver a cajones</button>
+      </div>
+    </main>
     <div
       v-if="confirmacionActiva"
       class="confirmation-backdrop"
@@ -1264,6 +1400,10 @@ onBeforeUnmount(() => {
 .confirmation-danger { border-color: #8b4d55; color: #fff; background: #71343d; }
 .confirmation-danger:hover:not(:disabled) { border-color: #bf6b76; background: #86404b; }
 .editor-toolbar { align-items: center; gap: 10px; }
+.editor-lease-waiting { display: grid; align-content: center; justify-items: center; gap: 12px; min-height: 100dvh; padding: 24px; color: #e9edf4; background: #0b0e13; text-align: center; }
+.editor-lease-waiting h1 { margin: 0; font-size: 1.4rem; }
+.editor-lease-waiting p { max-width: 440px; margin: 0; color: #b7c1ce; line-height: 1.55; }
+.lease-waiting-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .toolbar-controls { flex: 1; min-width: 0; gap: 8px; }
 .editing-controls,.view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .view-controls { flex: 0 0 auto; padding-left: 8px; border-left: 1px solid #384454; }

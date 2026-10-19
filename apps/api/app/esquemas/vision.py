@@ -97,6 +97,26 @@ class RespuestaConfiguracionVision(BaseModel):
     zones: list[RespuestaZonaVision]
 
 
+class SolicitudLeaseCalibracionVision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    editor_instance_id: UUID
+
+
+class RespuestaEstadoLeaseCalibracionVision(BaseModel):
+    available: bool
+    lease_duration_seconds: StrictInt = Field(gt=0)
+
+
+class RespuestaLeaseCalibracionVision(BaseModel):
+    acquired: bool = True
+    lease_duration_seconds: StrictInt = Field(gt=0)
+
+
+class RespuestaLiberacionLeaseCalibracionVision(BaseModel):
+    released: bool
+
+
 class RespuestaSesionVision(BaseModel):
     session_id: UUID
     revision: int

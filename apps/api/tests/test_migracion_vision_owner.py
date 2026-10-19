@@ -15,4 +15,4 @@ def test_migracion_reemplaza_vencimiento_por_autorizacion_de_sesion(
 
     assert "vision_elevada_hasta" not in columnas
     assert columnas["vision_autorizada"]["nullable"] is False
-    assert db.scalar(text("SELECT version_num FROM alembic_version")) == "20261015_0001"
+    assert db.scalar(text("SELECT version_num FROM alembic_version")) == "20261018_0001"

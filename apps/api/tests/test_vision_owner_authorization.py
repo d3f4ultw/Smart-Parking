@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import time
 from collections.abc import Generator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,8 +20,16 @@ import app.api.rutas.vision_owner as rutas_vision_owner
 import main
 from app.core.config import get_settings
 from app.core.database import get_db
-from app.models import CuentaPropietario, RolUsuario, Sesion, Usuario
+from app.models import (
+    Cajon,
+    CuentaPropietario,
+    RolUsuario,
+    Sesion,
+    Usuario,
+    VisionCalibrationLease,
+)
 from app.seguridad.contrasenas import crear_hash_contrasena
+from app.seguridad.sesiones import generar_token_sesion, hash_token_sesion
 from app.servicios.autorizacion_vision import sesion_tiene_autorizacion_vision
 
 CONTRASENA_LOGIN = "VisionOwnerLogin-Test-2026!"
@@ -356,6 +365,14 @@ def test_owner_requiere_clave_administrativa_y_la_autorizacion_es_de_sesion(
     assert configuracion.status_code == 200
     assert "zones" in configuracion.json()
 
+    instancia_editor = uuid4()
+    lease_adquirido = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(instancia_editor)},
+    )
+    assert lease_adquirido.status_code == 200
+
     revocada = owner_client.delete(
         "/api/admin/vision/authorization",
         headers={"Origin": ORIGEN_WEB},
@@ -364,6 +381,11 @@ def test_owner_requiere_clave_administrativa_y_la_autorizacion_es_de_sesion(
     assert revocada.json() == {"authorized": False}
     db.refresh(sesion)
     assert sesion.vision_autorizada is False
+    lease = db.get(VisionCalibrationLease, 1)
+    assert lease is not None
+    db.refresh(lease)
+    assert lease.owner_session_hash is None
+    assert lease.editor_instance_id is None
     assert owner_client.get("/api/admin/vision/configuration").status_code == 403
 
 
@@ -528,3 +550,215 @@ def test_intentos_de_clave_administrativa_estan_limitados(
     for _ in range(5):
         assert verificar(owner_client, "IncorrectVisionAdmin-2026!").status_code == 401
     assert verificar(owner_client, "IncorrectVisionAdmin-2026!").status_code == 429
+
+
+def test_lease_calibracion_da_un_solo_ganador_y_vincula_sesion_e_instancia(
+    owner_client: TestClient,
+    db: Session,
+) -> None:
+    usuario_id = crear_owner(db)
+    correo = db.get(Usuario, usuario_id).correo
+    iniciar_sesion_owner(owner_client, correo)
+    assert verificar(owner_client, CONTRASENA_ADMIN).status_code == 200
+
+    cookie_name = get_settings().session_cookie_name
+    token_original = owner_client.cookies.get(cookie_name)
+    assert token_original is not None
+    instancias = [uuid4(), uuid4()]
+
+    def adquirir(instancia: UUID):
+        return owner_client.post(
+            "/api/admin/vision/calibration-lease/acquire",
+            headers={"Origin": ORIGEN_WEB},
+            json={"editor_instance_id": str(instancia)},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        respuestas = list(executor.map(adquirir, instancias))
+
+    assert sorted(respuesta.status_code for respuesta in respuestas) == [200, 409]
+    ganador = instancias[
+        next(
+            i
+            for i, respuesta in enumerate(respuestas)
+            if respuesta.status_code == 200
+        )
+    ]
+    perdedor = instancias[
+        next(
+            i
+            for i, respuesta in enumerate(respuestas)
+            if respuesta.status_code == 409
+        )
+    ]
+    disponibilidad = owner_client.get("/api/admin/vision/calibration-lease").json()
+    assert disponibilidad["available"] is False
+    assert adquirir(ganador).status_code == 200
+
+    token_segundo = generar_token_sesion()
+    db.add(
+        Sesion(
+            usuario_id=usuario_id,
+            token_hash=hash_token_sesion(token_segundo),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+            vision_autorizada=True,
+        )
+    )
+    db.commit()
+    owner_client.cookies.set(cookie_name, token_segundo)
+    otra_sesion = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(uuid4())},
+    )
+    assert otra_sesion.status_code == 409
+
+    owner_client.cookies.set(cookie_name, token_original)
+    liberacion_ajena = owner_client.post(
+        "/api/admin/vision/calibration-lease/release",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(perdedor)},
+    )
+    assert liberacion_ajena.status_code == 200
+    assert liberacion_ajena.json() == {"released": False}
+
+    liberacion = owner_client.post(
+        "/api/admin/vision/calibration-lease/release",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(ganador)},
+    )
+    assert liberacion.status_code == 200
+    assert liberacion.json() == {"released": True}
+    disponibilidad = owner_client.get("/api/admin/vision/calibration-lease").json()
+    assert disponibilidad["available"] is True
+
+    owner_client.cookies.set(cookie_name, token_segundo)
+    reentrada = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(uuid4())},
+    )
+    assert reentrada.status_code == 200
+
+
+def test_escritura_configuracion_y_retiro_exigen_el_lease_vigente(
+    owner_client: TestClient,
+    db: Session,
+) -> None:
+    usuario_id = crear_owner(db)
+    correo = db.get(Usuario, usuario_id).correo
+    iniciar_sesion_owner(owner_client, correo)
+    assert verificar(owner_client, CONTRASENA_ADMIN).status_code == 200
+    configuracion = owner_client.get("/api/admin/vision/configuration").json()
+    zonas = [
+        {
+            "vision_zone_id": zona["vision_zone_id"],
+            "numero": zona["numero"],
+            "polygon": zona["polygon"],
+        }
+        for zona in configuracion["zones"]
+    ]
+    solicitud = {
+        "request_id": str(uuid4()),
+        "expected_revision": configuracion["revision"],
+        "zones": zonas,
+    }
+
+    sin_lease = owner_client.put(
+        "/api/admin/vision/configuration",
+        headers={"Origin": ORIGEN_WEB, "X-Vision-Editor-Instance": str(uuid4())},
+        json=solicitud,
+    )
+    assert sin_lease.status_code == 409
+
+    instancia = uuid4()
+    adquirido = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(instancia)},
+    )
+    assert adquirido.status_code == 200
+
+    intento_externo = owner_client.put(
+        "/api/vision/configuration",
+        headers={"Authorization": "Bearer " + "A" * 43},
+        json={**solicitud, "request_id": str(uuid4())},
+    )
+    assert intento_externo.status_code == 409
+
+    retiro_sin_lease = owner_client.put(
+        "/api/admin/vision/configuration",
+        headers={"Origin": ORIGEN_WEB, "X-Vision-Editor-Instance": str(uuid4())},
+        json={**solicitud, "request_id": str(uuid4()), "zones": []},
+    )
+    assert retiro_sin_lease.status_code == 409
+
+    retiro_con_lease = owner_client.put(
+        "/api/admin/vision/configuration",
+        headers={"Origin": ORIGEN_WEB, "X-Vision-Editor-Instance": str(instancia)},
+        json={**solicitud, "request_id": str(uuid4()), "zones": []},
+    )
+    assert retiro_con_lease.status_code == 200
+    zona = db.scalar(select(Cajon).where(Cajon.numero == 1))
+    assert zona is not None
+    db.refresh(zona)
+    assert zona.activa is False
+
+
+def test_lease_expirado_no_se_renueva_y_una_instancia_nueva_puede_reingresar(
+    owner_client: TestClient,
+    db: Session,
+) -> None:
+    usuario_id = crear_owner(db)
+    correo = db.get(Usuario, usuario_id).correo
+    iniciar_sesion_owner(owner_client, correo)
+    assert verificar(owner_client, CONTRASENA_ADMIN).status_code == 200
+    cookie_name = get_settings().session_cookie_name
+    token_sesion = owner_client.cookies.get(cookie_name)
+    assert token_sesion is not None
+    instancia_anterior = uuid4()
+    adquirido = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(instancia_anterior)},
+    )
+    assert adquirido.status_code == 200
+
+    lease = db.get(VisionCalibrationLease, 1)
+    assert lease is not None
+    lease.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db.commit()
+
+    renovacion_expirada = owner_client.post(
+        "/api/admin/vision/calibration-lease/renew",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(instancia_anterior)},
+    )
+    assert renovacion_expirada.status_code == 409
+    disponibilidad = owner_client.get("/api/admin/vision/calibration-lease").json()
+    assert disponibilidad["available"] is True
+
+    configuracion = owner_client.get("/api/admin/vision/configuration").json()
+    escritura_expirada = owner_client.put(
+        "/api/admin/vision/configuration",
+        headers={
+            "Origin": ORIGEN_WEB,
+            "X-Vision-Editor-Instance": str(instancia_anterior),
+        },
+        json={
+            "request_id": str(uuid4()),
+            "expected_revision": configuracion["revision"],
+            "zones": [],
+        },
+    )
+    assert escritura_expirada.status_code == 409
+
+    instancia_nueva = uuid4()
+    reentrada = owner_client.post(
+        "/api/admin/vision/calibration-lease/acquire",
+        headers={"Origin": ORIGEN_WEB},
+        json={"editor_instance_id": str(instancia_nueva)},
+    )
+    assert reentrada.status_code == 200
+    db.refresh(lease)
+    assert lease.owner_session_hash == hash_token_sesion(token_sesion)

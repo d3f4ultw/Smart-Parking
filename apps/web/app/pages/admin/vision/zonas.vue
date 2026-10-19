@@ -9,12 +9,6 @@ import {
 } from '~/utils/vision-config-sync'
 import { crearActualizadorCoalescido, puedeAplicarRevisionVision } from '~/utils/vision-config-refresh'
 import { abrirEditorVision, type AbrirEditorVision, type ModoEditorVision } from '~/utils/vision-zone-actions'
-import {
-  claveReservaEditorVision,
-  editorVisionYaAbierto,
-  guardarReservaEditorVision,
-  liberarReservaEditorVision,
-} from '~/utils/vision-editor-tabs'
 
 definePageMeta({ layout: 'admin', middleware: 'sesion-owner' })
 
@@ -35,6 +29,7 @@ const fetchVision = $fetch.create({
 })
 const configuracion = ref<RespuestaConfiguracionVision | null>(null)
 const estado = ref<EstadoMonitoreo | null>(null)
+const leaseDisponible = ref<boolean | null>(null)
 const cargando = ref(true)
 const eliminando = ref(false)
 const error = ref('')
@@ -93,12 +88,32 @@ async function cargarEstado() {
   }
 }
 
+async function cargarDisponibilidadCalibracion() {
+  if (!vision.autorizado.value) {
+    leaseDisponible.value = null
+    return
+  }
+  try {
+    const respuesta = await fetchVision<{ available: boolean }>(
+      '/api/admin/vision/calibration-lease',
+    )
+    leaseDisponible.value = respuesta.available
+  } catch (fallo: unknown) {
+    leaseDisponible.value = null
+    await vision.manejarErrorProtegido(fallo)
+  }
+}
+
 const actualizarDatos = crearActualizadorCoalescido(async () => {
   if (!vision.autorizado.value) return
   cargando.value = true
   error.value = ''
   try {
-    await Promise.allSettled([cargarConfiguracion(), cargarEstado()])
+    await Promise.allSettled([
+      cargarConfiguracion(),
+      cargarEstado(),
+      cargarDisponibilidadCalibracion(),
+    ])
   } finally {
     cargando.value = false
   }
@@ -125,22 +140,10 @@ function claseEstado(numero: number): string {
 }
 
 function solicitarAperturaEditor(modo: ModoEditorVision, zoneId?: string) {
-  if (abrirEnCurso.value) return
+  if (abrirEnCurso.value || leaseDisponible.value !== true) return
   abrirEnCurso.value = true
   error.value = ''
   mensaje.value = ''
-  const clave = claveReservaEditorVision(zoneId)
-  const pendiente = 'pending-' + crypto.randomUUID()
-  try {
-    if (editorVisionYaAbierto(window.localStorage, clave)) {
-      error.value = 'Ya hay un editor abierto para esta zona en otra pestaña.'
-      abrirEnCurso.value = false
-      return
-    }
-    guardarReservaEditorVision(window.localStorage, clave, pendiente)
-  } catch {
-    // El editor sigue disponible si el navegador bloquea el almacenamiento local.
-  }
 
   let abierto = false
   const abrir: AbrirEditorVision = (url, destino) => {
@@ -154,22 +157,10 @@ function solicitarAperturaEditor(modo: ModoEditorVision, zoneId?: string) {
   abrirEditorVision(abrir, modo, zoneId)
   if (!abierto) {
     error.value = 'El navegador bloqueó la pestaña nueva. Permite ventanas emergentes e inténtalo otra vez.'
-    try {
-      liberarReservaEditorVision(window.localStorage, clave, pendiente)
-    } catch {
-      // No se requiere almacenamiento para el flujo del editor.
-    }
     abrirEnCurso.value = false
     return
   }
-  window.setTimeout(() => {
-    try {
-      liberarReservaEditorVision(window.localStorage, clave, pendiente)
-    } catch {
-      // La pestaña ya mantiene su propia reserva si el almacenamiento está disponible.
-    }
-    abrirEnCurso.value = false
-  }, 600)
+  window.setTimeout(() => { abrirEnCurso.value = false }, 600)
 }
 
 function solicitarEliminacion(zona: ZonaVisionWeb) {
@@ -223,12 +214,20 @@ async function confirmarEliminacion() {
   eliminando.value = true
   error.value = ''
   mensaje.value = ''
+  const editorInstanceId = crypto.randomUUID()
+  let leaseAdquirido = false
   try {
+    await fetchVision('/api/admin/vision/calibration-lease/acquire', {
+      method: 'POST',
+      body: { editor_instance_id: editorInstanceId },
+    })
+    leaseAdquirido = true
     const requestId = crypto.randomUUID()
     const respuesta = await fetchVision<RespuestaConfiguracionVision>(
       '/api/admin/vision/configuration',
       {
         method: 'PUT',
+        headers: { 'X-Vision-Editor-Instance': editorInstanceId },
         body: {
           request_id: requestId,
           expected_revision: actual.revision,
@@ -252,17 +251,33 @@ async function confirmarEliminacion() {
     await cargarEstado()
   } catch (fallo: unknown) {
     if (obtenerMensaje(fallo) === 409) {
-      error.value = 'La configuración cambió en otra pestaña. No se retiró ningún cajón; se cargaron los cambios recientes.'
-      zonaPendienteEliminar.value = null
-      restaurarFocoRetiro()
-      await cargarConfiguracion()
-      await cargarEstado()
+      if (!leaseAdquirido) {
+        leaseDisponible.value = false
+        error.value = 'Calibración en uso. No se retiró ningún cajón.'
+      } else {
+        error.value = 'La configuración cambió. No se retiró ningún cajón; se cargaron los cambios recientes.'
+        zonaPendienteEliminar.value = null
+        restaurarFocoRetiro()
+        await cargarConfiguracion()
+        await cargarEstado()
+      }
     } else {
       error.value = 'No se pudo retirar el cajón. La configuración guardada permanece sin cambios.'
     }
     await vision.manejarErrorProtegido(fallo)
   } finally {
+    if (leaseAdquirido) {
+      try {
+        await fetchVision('/api/admin/vision/calibration-lease/release', {
+          method: 'POST',
+          body: { editor_instance_id: editorInstanceId },
+        })
+      } catch {
+        // El lease vence si el navegador no alcanza a liberarlo.
+      }
+    }
     eliminando.value = false
+    await cargarDisponibilidadCalibracion()
   }
 }
 
@@ -288,6 +303,7 @@ watch(vision.autorizado, (autorizado) => {
   else {
     configuracion.value = null
     estado.value = null
+    leaseDisponible.value = null
   }
 }, { immediate: true })
 
@@ -297,8 +313,11 @@ onMounted(() => {
   manejadorVisibilidad = alVolverVisible
   document.addEventListener('visibilitychange', manejadorVisibilidad)
   temporizadorActualizacion = window.setInterval(() => {
-    if (document.visibilityState === 'visible') void cargarEstado()
-  }, 5_000)
+    if (document.visibilityState === 'visible') {
+      void cargarEstado()
+      void cargarDisponibilidadCalibracion()
+    }
+  }, 3_000)
 })
 
 onBeforeUnmount(() => {
@@ -322,12 +341,14 @@ onBeforeUnmount(() => {
         </div>
         <div class="heading-actions">
           <button class="secondary-button" type="button" :disabled="cargando" @click="actualizarDatos">Actualizar</button>
-          <button class="primary-button" type="button" :disabled="cargando || abrirEnCurso" @click="abrirNuevoEditor">Nuevo cajón</button>
+          <button class="primary-button" type="button" :disabled="cargando || abrirEnCurso || leaseDisponible !== true" @click="abrirNuevoEditor">Abrir calibración</button>
         </div>
       </header>
 
       <p v-if="mensaje" class="notice-success" role="status">{{ mensaje }}</p>
       <p v-if="error" class="notice-error" role="alert">{{ error }}</p>
+      <p v-if="leaseDisponible === false || eliminando" class="notice-warning" role="status">Calibración en uso</p>
+      <p v-else-if="leaseDisponible === null" class="notice-warning" role="status">Verificando disponibilidad de calibración…</p>
 
       <section class="zones-panel" aria-labelledby="zones-title">
         <div class="panel-heading">
@@ -343,8 +364,8 @@ onBeforeUnmount(() => {
         <div v-else-if="(configuracion?.zones.length ?? 0) === 0" class="empty-state">
           <span class="empty-icon" aria-hidden="true">⌑</span>
           <h3>Todavía no hay cajones</h3>
-          <p>Selecciona Nuevo cajón y marca los puntos sobre la imagen.</p>
-          <button class="primary-button" type="button" :disabled="abrirEnCurso" @click="abrirNuevoEditor">Nuevo cajón</button>
+          <p>Abre la calibración y elige “Nuevo cajón” dentro del editor para marcar el primero.</p>
+          <button class="primary-button" type="button" :disabled="abrirEnCurso || leaseDisponible !== true" @click="abrirNuevoEditor">Abrir calibración</button>
         </div>
         <ul v-else class="zone-list">
           <li v-for="zona in configuracion?.zones" :key="zona.vision_zone_id" class="zone-row">
@@ -358,8 +379,8 @@ onBeforeUnmount(() => {
               {{ estadoZona(zona.numero) }}
             </span>
             <div class="zone-actions">
-              <button class="edit-button" type="button" :disabled="abrirEnCurso" :aria-label="'Editar cajón C' + zona.numero" @click="abrirEditorZona(zona)">Editar</button>
-              <button class="delete-button" type="button" :disabled="eliminando" :aria-label="'Retirar cajón C' + zona.numero" @click="solicitarEliminacion(zona)">Retirar</button>
+              <button class="edit-button" type="button" :disabled="abrirEnCurso || leaseDisponible !== true" :aria-label="'Editar cajón C' + zona.numero" @click="abrirEditorZona(zona)">Editar</button>
+              <button class="delete-button" type="button" :disabled="eliminando || leaseDisponible !== true" :aria-label="'Retirar cajón C' + zona.numero" @click="solicitarEliminacion(zona)">Retirar</button>
             </div>
           </li>
         </ul>
@@ -436,9 +457,10 @@ h1:focus { outline: 2px solid var(--admin-focus); outline-offset: 4px; }
 .empty-icon { display: grid; place-items: center; width: 48px; height: 48px; margin: 0 auto 13px; border-radius: 13px; color: var(--admin-accent); background: var(--admin-surface-soft); font-size: 1.8rem; }
 .empty-state h3 { margin: 0; color: var(--admin-foreground); font-size: 1rem; }
 .empty-state p { margin: 7px 0 17px; font-size: .82rem; }
-.notice-error,.notice-success { margin: 0 0 14px; padding: 11px 13px; border-radius: 8px; font-size: .8rem; }
+.notice-error,.notice-success,.notice-warning { margin: 0 0 14px; padding: 11px 13px; border-radius: 8px; font-size: .8rem; }
 .notice-error { color: #9a343f; background: #fff0f0; }
 .notice-success { color: #18745e; background: #e8f7f1; }
+.notice-warning { color: #77500b; background: #fff7df; }
 .dialog-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(12 16 22 / 55%); backdrop-filter: blur(2px); }
 .delete-dialog { width: min(100%, 410px); padding: 24px; border: 1px solid var(--admin-border); border-radius: 14px; background: var(--admin-surface); box-shadow: 0 24px 70px #0003; }
 .dialog-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; color: #a14d4d; background: #faeaea; font-weight: 900; }
