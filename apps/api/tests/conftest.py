@@ -27,6 +27,7 @@ from app.models import (
     InscripcionPropietario,
     Sesion,
     SesionGestionPropietario,
+    TurnoEmpleado,
     Usuario,
     VisionCalibrationLease,
     VisionConfiguration,
@@ -183,6 +184,7 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(ConexionSSEUsuario))
         session.execute(delete(EventoTiempoReal))
         session.execute(delete(HistorialModalidadEstacionamiento))
+        session.execute(delete(TurnoEmpleado))
         session.execute(delete(ConfiguracionEstacionamiento))
         session.execute(delete(Usuario))
         session.execute(delete(Cajon))

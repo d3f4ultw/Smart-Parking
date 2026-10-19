@@ -12,6 +12,7 @@ from app.api.rutas import (
     RUTA_CONFIGURACION_ACCESO,
     RUTA_CONFIGURACION_MODALIDAD,
     RUTA_CREAR_OPERADOR,
+    RUTA_HORARIOS_EMPLEADOS,
     RUTA_LOGIN,
     RUTA_LOGOUT,
     RUTA_ME,
@@ -23,6 +24,7 @@ from app.api.rutas import (
     configuracion_estacionamiento_router,
     eventos_tiempo_real_router,
     gestion_propietario_router,
+    horarios_empleados_router,
     operadores_router,
     vision_frames_router,
     vision_owner_router,
@@ -38,6 +40,7 @@ from app.models import (  # noqa: F401
     InscripcionPropietario,
     Sesion,
     SesionGestionPropietario,
+    TurnoEmpleado,
     Usuario,
 )
 from app.servicios.vision_frames import VisionFrameHub
@@ -65,6 +68,7 @@ app.state.database_engine = engine
 app.include_router(autenticacion_router)
 app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
+app.include_router(horarios_empleados_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
 app.include_router(vision_router)
@@ -98,6 +102,7 @@ RUTAS_SIN_CACHE = (
         RUTA_ME,
         RUTA_CONFIGURACION_MODALIDAD,
         RUTA_CONFIGURACION_ACCESO,
+        RUTA_HORARIOS_EMPLEADOS,
     }
 )
 

@@ -19,6 +19,12 @@ from app.models.eventos_tiempo_real import (
 from app.models.inscripcion_propietario import InscripcionPropietario
 from app.models.sesion import Sesion
 from app.models.sesion_gestion_propietario import SesionGestionPropietario
+from app.models.turno_empleado import (
+    CODIGOS_TURNOS_EMPLEADOS,
+    NOMBRES_TURNOS_EMPLEADOS,
+    CodigoTurnoEmpleado,
+    TurnoEmpleado,
+)
 from app.models.usuario import RolUsuario, Usuario
 from app.models.vision_calibration_lease import VisionCalibrationLease
 from app.models.vision_configuration import VisionConfiguration, VisionRequest
@@ -26,6 +32,8 @@ from app.models.vision_configuration import VisionConfiguration, VisionRequest
 __all__ = [
     "ActivacionCuenta",
     "Cajon",
+    "CODIGOS_TURNOS_EMPLEADOS",
+    "CodigoTurnoEmpleado",
     "ConexionSSEUsuario",
     "ConfiguracionEstacionamiento",
     "CuentaPropietario",
@@ -36,10 +44,12 @@ __all__ = [
     "EstadoOperativoCajon",
     "EventoTiempoReal",
     "HistorialModalidadEstacionamiento",
+    "NOMBRES_TURNOS_EMPLEADOS",
     "InscripcionPropietario",
     "RolUsuario",
     "Sesion",
     "SesionGestionPropietario",
+    "TurnoEmpleado",
     "Usuario",
     "VisionCalibrationLease",
     "VisionConfiguration",

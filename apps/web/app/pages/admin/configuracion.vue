@@ -22,6 +22,7 @@ type AccionConfirmacion = 'modalidad' | 'acceso' | null
 
 const fetchConCookies = useRequestFetch()
 const { mostrarToast } = useAdminToasts()
+const { usuario } = useSesion()
 const carga = await useAsyncData<ResultadoCarga>(
   'admin-configuracion-modalidad',
   async (_nuxtApp, { signal }) => {
@@ -63,6 +64,10 @@ const mensajeError = ref(
 
 const configuracionDisponible = computed(
   () => carga.data.value?.tipo === 'exito',
+)
+const puedeAdministrarHorarios = computed(
+  () => usuario.value?.rol === 'OWNER'
+    && (modalidadGuardada.value === 'PRIVADO' || modalidadGuardada.value === 'MIXTO'),
 )
 const puedeGuardar = computed(() =>
   configuracionDisponible.value
@@ -364,6 +369,8 @@ async function confirmarAccion() {
         </button>
       </div>
     </section>
+
+    <AdminHorariosEmpleadosPanel v-if="puedeAdministrarHorarios" />
 
     <dialog
       ref="dialogoConfirmacion"

@@ -1,8 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -92,6 +93,11 @@ class Settings(BaseSettings):
         le=60,
         validation_alias="ACTIVATION_CHALLENGE_TTL_MINUTES",
     )
+    parking_timezone: str = Field(
+        default="America/Mexico_City",
+        min_length=1,
+        validation_alias="PARKING_TIMEZONE",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="",
@@ -99,6 +105,25 @@ class Settings(BaseSettings):
         extra="ignore",
         populate_by_name=True,
     )
+
+    @field_validator("parking_timezone")
+    @classmethod
+    def validar_zona_horaria(cls, valor: str) -> str:
+        """Exige una zona IANA disponible en los datos de horario de Python."""
+
+        try:
+            ZoneInfo(valor)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError(
+                "PARKING_TIMEZONE debe ser una zona IANA válida."
+            ) from error
+        return valor
+
+    @property
+    def zona_horaria_estacionamiento(self) -> ZoneInfo:
+        """Devuelve la zona validada que gobierna los horarios del estacionamiento."""
+
+        return ZoneInfo(self.parking_timezone)
 
     @property
     def database_url(self) -> URL:

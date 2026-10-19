@@ -12,6 +12,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models import ConfiguracionEstacionamiento, HistorialModalidadEstacionamiento
+from app.servicios.horarios_empleados import sembrar_turnos_empleados
 
 ModalidadEstacionamiento = Literal["PRIVADO", "PUBLICO", "MIXTO"]
 MODALIDADES_ESTACIONAMIENTO = frozenset({"PRIVADO", "PUBLICO", "MIXTO"})
@@ -160,6 +161,7 @@ def cambiar_modalidad_estacionamiento(
                 )
                 id_insertado = db.scalar(insercion)
                 if id_insertado is not None:
+                    sembrar_turnos_empleados(db, configuracion_id=1)
                     configuracion = db.get(ConfiguracionEstacionamiento, 1)
                     if configuracion is None:
                         raise RuntimeError("No se pudo leer la configuracion creada.")

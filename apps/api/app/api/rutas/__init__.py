@@ -38,6 +38,12 @@ from app.api.rutas.gestion_propietario import (
 from app.api.rutas.gestion_propietario import (
     router as gestion_propietario_router,
 )
+from app.api.rutas.horarios_empleados import (
+    RUTA_HORARIOS_EMPLEADOS,
+)
+from app.api.rutas.horarios_empleados import (
+    router as horarios_empleados_router,
+)
 from app.api.rutas.operadores import (
     RUTA_CREAR_OPERADOR,
 )
@@ -58,6 +64,7 @@ __all__ = [
     "RUTA_CONFIGURACION_MODALIDAD",
     "RUTA_CONFIGURACION_ACCESO",
     "RUTA_GESTION_PROPIETARIO",
+    "RUTA_HORARIOS_EMPLEADOS",
     "activaciones_operador_router",
     "activaciones_propietario_router",
     "autenticacion_router",
@@ -66,6 +73,7 @@ __all__ = [
     "configuracion_acceso_router",
     "eventos_tiempo_real_router",
     "gestion_propietario_router",
+    "horarios_empleados_router",
     "operadores_router",
     "vision_router",
     "vision_owner_router",

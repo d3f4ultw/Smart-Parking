@@ -36,11 +36,21 @@ class ConfiguracionEstacionamiento(Base):
             "revision > 0",
             name="ck_configuracion_estacionamiento_revision_positiva",
         ),
+        CheckConstraint(
+            "revision_horarios > 0",
+            name="ck_configuracion_estacionamiento_revision_horarios_positiva",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     modalidad: Mapped[str] = mapped_column(String(8), nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    revision_horarios: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+        server_default="1",
+    )
     acceso_suspendido: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

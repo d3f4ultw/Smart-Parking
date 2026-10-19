@@ -9,6 +9,13 @@ import {
   mapearErrorConfiguracion,
   puedeGuardarModalidad,
 } from '../app/utils/configuracion-estacionamiento.ts'
+import {
+  crearHorariosConfigurables,
+  modalidadAdmiteHorarios,
+  TURNOS_CONFIGURABLES,
+  TURNO_SIN_RESTRICCION,
+  validarHorariosConfigurables,
+} from '../app/utils/horarios-empleados.ts'
 
 const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -83,4 +90,75 @@ test('la página conserva el límite OWNER, el SSR y la respuesta persistida', (
   assert.match(pagina, /no cambia las operaciones de/)
   assert.match(layout, /v-if="usuario\?\.rol === 'OWNER'"/)
   assert.match(layout, /to="\/admin\/configuracion"/)
+})
+
+test('los horarios solo aplican a Empresarial y Mixta', () => {
+  assert.equal(modalidadAdmiteHorarios('PRIVADO'), true)
+  assert.equal(modalidadAdmiteHorarios('MIXTO'), true)
+  assert.equal(modalidadAdmiteHorarios('PUBLICO'), false)
+  assert.equal(modalidadAdmiteHorarios(null), false)
+  assert.deepEqual(TURNOS_CONFIGURABLES.map(({ codigo, etiqueta }) => [codigo, etiqueta]), [
+    ['MATUTINO', 'Matutino'],
+    ['VESPERTINO', 'Vespertino'],
+    ['NOCTURNO', 'Nocturno'],
+  ])
+  assert.deepEqual(TURNO_SIN_RESTRICCION, {
+    codigo: 'SIN_RESTRICCION',
+    etiqueta: 'Sin restricción',
+  })
+})
+
+test('la interfaz valida intervalos completos y permite cruce de medianoche', () => {
+  const respuesta = {
+    revision: 4,
+    zona_horaria: 'America/Mexico_City',
+    turnos: [
+      { id: 1, codigo: 'MATUTINO', nombre: 'Matutino', hora_inicio: null, hora_fin: null },
+      { id: 2, codigo: 'VESPERTINO', nombre: 'Vespertino', hora_inicio: null, hora_fin: null },
+      { id: 3, codigo: 'NOCTURNO', nombre: 'Nocturno', hora_inicio: null, hora_fin: null },
+      { id: 4, codigo: 'SIN_RESTRICCION', nombre: 'Sin restricción', hora_inicio: null, hora_fin: null },
+    ],
+  } as const
+  const horarios = crearHorariosConfigurables(respuesta)
+
+  assert.deepEqual(validarHorariosConfigurables(horarios), {})
+  assert.deepEqual(validarHorariosConfigurables({
+    ...horarios,
+    NOCTURNO: { hora_inicio: '22:00', hora_fin: '06:00' },
+  }), {})
+  assert.match(validarHorariosConfigurables({
+    ...horarios,
+    MATUTINO: { hora_inicio: '06:00', hora_fin: null },
+  }).MATUTINO ?? '', /ambas horas/)
+  assert.match(validarHorariosConfigurables({
+    ...horarios,
+    MATUTINO: { hora_inicio: '06:00', hora_fin: '06:00' },
+  }).MATUTINO ?? '', /distintas/)
+  assert.match(validarHorariosConfigurables({
+    ...horarios,
+    MATUTINO: { hora_inicio: '24:00', hora_fin: '06:00' },
+  }).MATUTINO ?? '', /válidas/)
+})
+
+test('la sección solo se monta para el Dueño y modalidad permitida', () => {
+  const pagina = readFileSync(
+    join(WEB_ROOT, 'app', 'pages', 'admin', 'configuracion.vue'),
+    'utf8',
+  )
+  const panel = readFileSync(
+    join(WEB_ROOT, 'app', 'components', 'admin', 'HorariosEmpleadosPanel.vue'),
+    'utf8',
+  )
+
+  assert.match(pagina, /usuario\.value\?\.rol === 'OWNER'/)
+  assert.match(pagina, /modalidadGuardada\.value === 'PRIVADO'/)
+  assert.match(pagina, /modalidadGuardada\.value === 'MIXTO'/)
+  assert.match(pagina, /<AdminHorariosEmpleadosPanel v-if="puedeAdministrarHorarios"/)
+  assert.match(panel, /useRequestFetch\(\)/)
+  assert.match(panel, /cache: 'no-store'/)
+  assert.match(panel, /clearNuxtData\(CLAVE_DATOS\)/)
+  assert.match(panel, /TURNO_SIN_RESTRICCION\.etiqueta/)
+  assert.match(panel, /Si el turno termina al día siguiente/)
+  assert.match(panel, /22:00|hora_inicio/)
+  assert.doesNotMatch(panel, /timezone.*select|type="timezone"/i)
 })

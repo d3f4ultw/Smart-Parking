@@ -765,6 +765,117 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
+    await suite.test('el BFF de horarios filtra cookies y valida el contrato completo', async () => {
+      const sessionToken = marker()
+      const unrelatedCookie = marker()
+      const authorizationToken = marker()
+      const hiddenField = marker()
+      sensitiveMarkers.push(sessionToken, unrelatedCookie, authorizationToken, hiddenField)
+      const cookie = 'smart_parking_session=' + sessionToken
+        + '; unrelated=' + unrelatedCookie
+      const payload = {
+        revision: 7,
+        zona_horaria: 'America/Mexico_City',
+        turnos: [
+          { id: 1, codigo: 'MATUTINO', nombre: 'Matutino', hora_inicio: null, hora_fin: null },
+          { id: 2, codigo: 'VESPERTINO', nombre: 'Vespertino', hora_inicio: null, hora_fin: null },
+          { id: 3, codigo: 'NOCTURNO', nombre: 'Nocturno', hora_inicio: null, hora_fin: null },
+          { id: 4, codigo: 'SIN_RESTRICCION', nombre: 'Sin restricción', hora_inicio: null, hora_fin: null },
+        ],
+      }
+      const lectura = await send(
+        '/api/admin/configuracion/horarios-empleados',
+        {
+          headers: {
+            cookie,
+            authorization: 'Bearer ' + authorizationToken,
+            'x-user-role': 'OWNER',
+            'x-user-id': '41',
+          },
+        },
+        jsonPlan(200, payload),
+      )
+
+      assert.equal(lectura.response.status, 200)
+      assertForwarded(lectura, 'GET', '/api/admin/configuracion/horarios-empleados')
+      assert.equal(lectura.upstreamRequest?.cookie, 'smart_parking_session=' + sessionToken)
+      assert.equal(lectura.upstreamRequest?.authorization, undefined)
+      assert.equal(lectura.upstreamRequest?.role, undefined)
+      assert.equal(lectura.upstreamRequest?.userId, undefined)
+      assert.equal(lectura.response.headers.get('cache-control'), 'no-store')
+      assert.deepEqual(JSON.parse(lectura.body), payload)
+
+      harness.clearRequests()
+      const solicitud = {
+        revision_esperada: 7,
+        turnos: {
+          MATUTINO: { hora_inicio: '06:00', hora_fin: '14:00' },
+          VESPERTINO: { hora_inicio: '14:00', hora_fin: '22:00' },
+          NOCTURNO: { hora_inicio: '22:00', hora_fin: '06:00' },
+        },
+      }
+      const body = JSON.stringify(solicitud)
+      const escritura = await send(
+        '/api/admin/configuracion/horarios-empleados',
+        {
+          method: 'PUT',
+          headers: {
+            cookie,
+            'content-type': 'application/json',
+            authorization: 'Bearer ' + authorizationToken,
+          },
+          body,
+        },
+        jsonPlan(200, { ...payload, revision: 8 }),
+      )
+
+      assert.equal(escritura.response.status, 200)
+      assertForwarded(escritura, 'PUT', '/api/admin/configuracion/horarios-empleados')
+      assert.equal(escritura.upstreamRequest?.cookie, 'smart_parking_session=' + sessionToken)
+      assert.equal(escritura.upstreamRequest?.body, body)
+      assert.equal(escritura.upstreamRequest?.contentType?.split(';')[0], 'application/json')
+      assert.equal(escritura.upstreamRequest?.authorization, undefined)
+      assert.equal(escritura.response.headers.get('cache-control'), 'no-store')
+
+      harness.clearRequests()
+      const solicitudesAntesDeInvalidas = harness.requests.length
+      for (const contenido of [
+        {
+          'content-type': 'application/json',
+          body: JSON.stringify({
+            ...solicitud,
+            turnos: {
+              ...solicitud.turnos,
+              SIN_RESTRICCION: { hora_inicio: null, hora_fin: null },
+            },
+          }),
+        },
+        {
+          'content-type': 'application/json',
+          body: JSON.stringify({
+            ...solicitud,
+            turnos: {
+              ...solicitud.turnos,
+              MATUTINO: { hora_inicio: '06:00', hora_fin: null },
+            },
+          }),
+        },
+        { 'content-type': 'text/plain', body },
+        {},
+      ]) {
+        const rechazo = await send(
+          '/api/admin/configuracion/horarios-empleados',
+          { method: 'PUT', headers: contenido, body: contenido.body },
+        )
+        assert.ok(rechazo.response.status >= 400)
+        assert.equal(rechazo.upstreamRequest, undefined)
+        assert.equal(rechazo.response.headers.get('cache-control'), 'no-store')
+        assertNoSensitiveBody(rechazo.body)
+      }
+      assert.equal(harness.requests.length, solicitudesAntesDeInvalidas)
+      harness.clearRequests()
+    })
+
     await suite.test('la ruta de configuración OWNER se renderiza con estado SSR persistido', async () => {
       const sessionToken = marker()
       const cookie = 'smart_parking_session=' + sessionToken
@@ -823,6 +934,16 @@ test('Nitro BFF security boundary preserves upstream contracts', {
         revision: 3,
         acceso_suspendido: true,
       }))
+      harness.queueResponse(jsonPlan(200, {
+        revision: 1,
+        zona_horaria: 'America/Mexico_City',
+        turnos: [
+          { id: 1, codigo: 'MATUTINO', nombre: 'Matutino', hora_inicio: null, hora_fin: null },
+          { id: 2, codigo: 'VESPERTINO', nombre: 'Vespertino', hora_inicio: null, hora_fin: null },
+          { id: 3, codigo: 'NOCTURNO', nombre: 'Nocturno', hora_inicio: null, hora_fin: null },
+          { id: 4, codigo: 'SIN_RESTRICCION', nombre: 'Sin restricción', hora_inicio: null, hora_fin: null },
+        ],
+      }))
 
       const paginaSuspendida = await fetch(
         harness.origin + '/admin/configuracion',
@@ -834,6 +955,12 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       assert.match(htmlSuspendido, /Reanudar acceso/)
       assert.match(htmlSuspendido, /class="modality-options" disabled/)
       assert.match(htmlSuspendido, /Modalidad actual:[\s\S]*Mixto/)
+      assert.match(htmlSuspendido, /Horarios de empleados/)
+      assert.match(htmlSuspendido, /Zona horaria: America\/Mexico_City/)
+      assert.match(htmlSuspendido, /Sin restricción/)
+      const solicitudesSuspendidas = harness.requests.slice(-3)
+      assert.equal(solicitudesSuspendidas[2]?.path, '/api/admin/configuracion/horarios-empleados')
+      assert.equal(solicitudesSuspendidas[2]?.cookie, cookie)
       assert.ok(!htmlSuspendido.includes(sessionToken))
       harness.clearRequests()
     })

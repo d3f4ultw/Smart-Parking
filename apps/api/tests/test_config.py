@@ -66,6 +66,22 @@ def test_settings_no_lee_archivos_dotenv() -> None:
     assert Settings.model_config.get("env_file") is None
 
 
+def test_zona_horaria_valida_zona_iana_y_usa_ubicacion_actual() -> None:
+    settings = crear_settings()
+
+    assert settings.parking_timezone == "America/Mexico_City"
+    assert settings.zona_horaria_estacionamiento.key == "America/Mexico_City"
+    assert (
+        crear_settings(parking_timezone="America/Tijuana").parking_timezone
+        == "America/Tijuana"
+    )
+
+
+def test_zona_horaria_de_estacionamiento_rechaza_identificador_desconocido() -> None:
+    with pytest.raises(ValidationError, match="PARKING_TIMEZONE"):
+        crear_settings(parking_timezone="Zona/No_Existe")
+
+
 def test_database_password_nunca_aparece_en_error_de_validacion() -> None:
     password = "secreto-db-de-prueba"
 

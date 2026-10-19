@@ -22,6 +22,7 @@ from app.models import (
     HistorialModalidadEstacionamiento,
     RolUsuario,
     Sesion,
+    TurnoEmpleado,
     Usuario,
 )
 from app.seguridad.sesiones import hash_token_sesion
@@ -421,3 +422,185 @@ def test_autorizacion_sigue_el_rol_persistido_y_no_la_identidad_del_owner(
         ).status_code
         == 403
     )
+
+
+def test_horarios_empleados_son_compartidos_revisionados_y_solo_owner(
+    client: TestClient,
+    db: Session,
+) -> None:
+    owner_id = _crear_usuario(db, RolUsuario.OWNER.value)
+    operador_id = _crear_usuario(db, RolUsuario.OPERADOR.value)
+    token_owner = _crear_sesion(db, owner_id)
+    token_operador = _crear_sesion(db, operador_id)
+
+    _usar_sesion(client, token_owner)
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 409
+    modalidad = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={"modalidad": "PRIVADO", "revision_esperada": 0},
+    )
+    assert modalidad.status_code == 200
+
+    lectura = client.get("/api/admin/configuracion/horarios-empleados")
+    assert lectura.status_code == 200
+    assert lectura.headers["cache-control"] == "no-store"
+    inicial = lectura.json()
+    assert inicial["revision"] == 1
+    assert inicial["zona_horaria"] == "America/Mexico_City"
+    assert [turno["codigo"] for turno in inicial["turnos"]] == [
+        "MATUTINO",
+        "VESPERTINO",
+        "NOCTURNO",
+        "SIN_RESTRICCION",
+    ]
+    ids_iniciales = {
+        turno["codigo"]: turno["id"] for turno in inicial["turnos"]
+    }
+    sin_restriccion = inicial["turnos"][-1]
+    assert sin_restriccion["nombre"] == "Sin restricción"
+    assert sin_restriccion["hora_inicio"] is None
+    assert sin_restriccion["hora_fin"] is None
+
+    cuerpo = {
+        "revision_esperada": inicial["revision"],
+        "turnos": {
+            "MATUTINO": {"hora_inicio": "06:00", "hora_fin": "14:00"},
+            "VESPERTINO": {"hora_inicio": "14:00", "hora_fin": "22:00"},
+            "NOCTURNO": {"hora_inicio": "22:00", "hora_fin": "06:00"},
+        },
+    }
+    guardado = client.put("/api/admin/configuracion/horarios-empleados", json=cuerpo)
+    assert guardado.status_code == 200
+    assert guardado.headers["cache-control"] == "no-store"
+    respuesta_guardada = guardado.json()
+    assert respuesta_guardada["revision"] == inicial["revision"] + 1
+    assert {
+        turno["codigo"]: turno["id"] for turno in respuesta_guardada["turnos"]
+    } == ids_iniciales
+    assert respuesta_guardada["turnos"][2]["hora_inicio"] == "22:00"
+    assert respuesta_guardada["turnos"][2]["hora_fin"] == "06:00"
+    assert db.query(TurnoEmpleado).count() == 4
+
+    obsoleta = client.put(
+        "/api/admin/configuracion/horarios-empleados",
+        json=cuerpo,
+    )
+    assert obsoleta.status_code == 409
+    assert client.get("/api/admin/configuracion/horarios-empleados").json() == (
+        respuesta_guardada
+    )
+
+    modo_publico = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={
+            "modalidad": "PUBLICO",
+            "revision_esperada": modalidad.json()["revision"],
+        },
+    )
+    assert modo_publico.status_code == 200
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 409
+    assert (
+        client.put(
+            "/api/admin/configuracion/horarios-empleados",
+            json=cuerpo,
+        ).status_code
+        == 409
+    )
+    modo_mixto = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={
+            "modalidad": "MIXTO",
+            "revision_esperada": modo_publico.json()["revision"],
+        },
+    )
+    assert modo_mixto.status_code == 200
+    assert client.get("/api/admin/configuracion/horarios-empleados").json() == (
+        respuesta_guardada
+    )
+
+    _usar_sesion(client, token_operador)
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 403
+    assert (
+        client.put(
+            "/api/admin/configuracion/horarios-empleados",
+            json=cuerpo,
+        ).status_code
+        == 403
+    )
+    _usar_sesion(client, None)
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 401
+
+
+def test_horarios_empleados_solo_aplican_a_empresarial_y_mixta_y_validan_intervalos(
+    client: TestClient,
+    db: Session,
+) -> None:
+    owner_id = _crear_usuario(db, RolUsuario.OWNER.value)
+    _usar_sesion(client, _crear_sesion(db, owner_id))
+
+    publico = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={"modalidad": "PUBLICO", "revision_esperada": 0},
+    )
+    assert publico.status_code == 200
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 409
+
+    revision = publico.json()["revision"]
+    privada = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={"modalidad": "PRIVADO", "revision_esperada": revision},
+    )
+    assert privada.status_code == 200
+    horarios = client.get("/api/admin/configuracion/horarios-empleados").json()
+    revision_horarios = horarios["revision"]
+    validos = {
+        "MATUTINO": {"hora_inicio": "07:00", "hora_fin": "15:00"},
+        "VESPERTINO": {"hora_inicio": "15:00", "hora_fin": "23:00"},
+        "NOCTURNO": {"hora_inicio": "23:00", "hora_fin": "07:00"},
+    }
+    cuerpos_invalidos = (
+        {
+            "revision_esperada": revision_horarios,
+            "turnos": {
+                **validos,
+                "MATUTINO": {"hora_inicio": "07:00", "hora_fin": None},
+            },
+        },
+        {
+            "revision_esperada": revision_horarios,
+            "turnos": {
+                **validos,
+                "MATUTINO": {"hora_inicio": "07:00", "hora_fin": "07:00"},
+            },
+        },
+        {
+            "revision_esperada": revision_horarios,
+            "turnos": {
+                **validos,
+                "SIN_RESTRICCION": {"hora_inicio": None, "hora_fin": None},
+            },
+        },
+        {
+            "revision_esperada": revision_horarios,
+            "turnos": {
+                **validos,
+                "MATUTINO": {"hora_inicio": "24:00", "hora_fin": "15:00"},
+            },
+        },
+    )
+    for cuerpo in cuerpos_invalidos:
+        respuesta = client.put(
+            "/api/admin/configuracion/horarios-empleados",
+            json=cuerpo,
+        )
+        assert respuesta.status_code == 422
+        assert respuesta.json() == {"detail": "Solicitud invalida"}
+
+    assert db.query(TurnoEmpleado).filter_by(hora_inicio=None).count() == 4
+
+    cambio_a_mixta = client.put(
+        "/api/admin/configuracion/modalidad",
+        json={"modalidad": "MIXTO", "revision_esperada": privada.json()["revision"]},
+    )
+    assert cambio_a_mixta.status_code == 200
+    assert client.get("/api/admin/configuracion/horarios-empleados").status_code == 200
