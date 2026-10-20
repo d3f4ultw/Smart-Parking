@@ -202,6 +202,8 @@ def test_journal_filtra_replay_por_rol_y_deniega_tipos_desconocidos(
         "operador.creado",
         "operador.actualizado",
         "cajon.actualizado",
+        "cliente.registrado",
+        "membresia.actualizada",
     }
 
 

@@ -6,6 +6,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from app.api.limite_cuerpo_registro import LimitarCuerpoRegistroCliente
 from app.api.rutas import (
     RUTA_ACTIVACION_OPERADOR,
     RUTA_ACTIVACION_PROPIETARIO,
@@ -16,17 +17,25 @@ from app.api.rutas import (
     RUTA_CREAR_OPERADOR,
     RUTA_HORARIOS_EMPLEADOS,
     RUTA_LOGIN,
+    RUTA_LOGIN_CLIENTE,
     RUTA_LOGOUT,
+    RUTA_LOGOUT_CLIENTE,
     RUTA_ME,
+    RUTA_ME_CLIENTE,
     RUTA_MEMBRESIAS,
+    RUTA_REGISTRO_CLIENTE,
     RUTA_STRIPE_WEBHOOK,
     activaciones_operador_router,
     activaciones_propietario_router,
+    autenticacion_clientes_router,
     autenticacion_router,
     cajones_router,
+    cliente_membresia_router,
     clientes_router,
     configuracion_acceso_router,
     configuracion_estacionamiento_router,
+    contrasena_clientes_router,
+    cuentas_clientes_router,
     empleados_router,
     eventos_tiempo_real_router,
     gestion_propietario_router,
@@ -45,13 +54,16 @@ from app.correo.smtp import cargar_configuracion_smtp
 from app.models import (  # noqa: F401
     ActivacionCuenta,
     Cliente,
+    CuentaCliente,
     CuentaPropietario,
     Empleado,
     EventoStripe,
     FacturaMembresia,
     InscripcionPropietario,
+    IntentoCheckoutCliente,
     Membresia,
     Sesion,
+    SesionCliente,
     SesionGestionPropietario,
     TurnoEmpleado,
     Usuario,
@@ -76,14 +88,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Smart Parking API", lifespan=lifespan)
 app.state.database_engine = engine
+app.add_middleware(LimitarCuerpoRegistroCliente)
 
 
 app.include_router(autenticacion_router)
+app.include_router(autenticacion_clientes_router)
 app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
 app.include_router(horarios_empleados_router)
 app.include_router(empleados_router)
 app.include_router(clientes_router)
+app.include_router(cliente_membresia_router)
+app.include_router(contrasena_clientes_router)
+app.include_router(cuentas_clientes_router)
 app.include_router(membresias_router)
 app.include_router(stripe_webhook_router)
 app.include_router(eventos_tiempo_real_router)
@@ -123,6 +140,10 @@ RUTAS_SIN_CACHE = (
         RUTA_ADMIN_EMPLEADOS,
         RUTA_ADMIN_CLIENTES,
         RUTA_MEMBRESIAS,
+        RUTA_REGISTRO_CLIENTE,
+        RUTA_LOGIN_CLIENTE,
+        RUTA_ME_CLIENTE,
+        RUTA_LOGOUT_CLIENTE,
         RUTA_STRIPE_WEBHOOK,
     }
 )
@@ -140,6 +161,8 @@ async def evitar_cache_en_autenticacion(
         request.url.path in RUTAS_SIN_CACHE
         or request.url.path.startswith(f"{RUTA_ADMIN_EMPLEADOS}/")
         or request.url.path.startswith(f"{RUTA_ADMIN_CLIENTES}/")
+        or request.url.path.startswith("/api/clientes/")
+        or request.url.path.startswith("/api/membresias/")
         or request.url.path.startswith("/api/gestion-propietario/v1/")
     ):
         response.headers["Cache-Control"] = "no-store"

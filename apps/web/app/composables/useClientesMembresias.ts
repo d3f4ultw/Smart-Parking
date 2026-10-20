@@ -1,6 +1,8 @@
 import type {
   DetalleMembresiaCliente,
   EstadoCheckout,
+  FiltroEstadoClientes,
+  RespuestaMembresiaCliente,
   RespuestaCheckout,
   RespuestaListaClientes,
   RespuestaPlanesMembresia,
@@ -9,11 +11,26 @@ import type {
 export function useClientesMembresias() {
   const fetchConCookies = useRequestFetch()
 
-  function listarClientes(pagina = 1, signal?: AbortSignal) {
+  function listarClientes(
+    pagina = 1,
+    estado: FiltroEstadoClientes = 'todos',
+    signal?: AbortSignal,
+  ) {
     return fetchConCookies<RespuestaListaClientes>('/api/admin/clientes', {
       credentials: 'same-origin',
       cache: 'no-store',
-      query: { pagina },
+      query: {
+        pagina,
+        ...(estado === 'todos' ? {} : { estado }),
+      },
+      signal,
+    })
+  }
+
+  function consultarMembresiaCliente(signal?: AbortSignal) {
+    return fetchConCookies<RespuestaMembresiaCliente>('/api/clientes/membresia', {
+      credentials: 'same-origin',
+      cache: 'no-store',
       signal,
     })
   }
@@ -47,6 +64,21 @@ export function useClientesMembresias() {
     })
   }
 
+  function cambiarContrasenaCliente(
+    contrasenaActual: string,
+    contrasenaNueva: string,
+  ) {
+    return $fetch<{ estado: 'contrasena_actualizada' }>('/api/clientes/contrasena', {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      body: {
+        contrasena_actual: contrasenaActual,
+        contrasena_nueva: contrasenaNueva,
+      },
+    })
+  }
+
   function consultarEstadoCheckout(sessionId: string, signal?: AbortSignal) {
     return fetchConCookies<EstadoCheckout>(
       `/api/membresias/checkout/${encodeURIComponent(sessionId)}/estado`,
@@ -59,6 +91,8 @@ export function useClientesMembresias() {
   }
 
   return {
+    cambiarContrasenaCliente,
+    consultarMembresiaCliente,
     consultarDetalle,
     consultarEstadoCheckout,
     consultarPlanes,

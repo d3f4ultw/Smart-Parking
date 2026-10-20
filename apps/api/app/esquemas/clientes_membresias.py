@@ -50,7 +50,7 @@ class EstadoCheckoutPublico(BaseModel):
 class ClienteResumen(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    codigo_cliente: str
+    codigo_cliente: str | None
     nombre_completo: str
     estado_membresia: str
 
@@ -78,10 +78,47 @@ class DetalleMembresiaCliente(BaseModel):
     cancelacion_programada: bool
 
 
+class DetalleMembresiaCuentaCliente(BaseModel):
+    """Snapshot comercial y de periodo de la membresia privada."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    plan: str
+    monto_centavos: int
+    moneda: str
+    intervalo: str
+    intervalo_cantidad: int
+    fecha_inicio: datetime | None
+    periodo_actual_inicio: datetime | None
+    periodo_actual_fin: datetime | None
+    cancelacion_programada: bool
+
+
+class MembresiaCuentaCliente(BaseModel):
+    """Estado de la cuenta autenticada sin datos de facturacion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    estado: Literal[
+        "sin_membresia",
+        "pendiente",
+        "activa",
+        "pago_vencido",
+        "inactiva",
+        "cancelada",
+        "cancelacion_programada",
+    ]
+    membresia: DetalleMembresiaCuentaCliente | None
+    checkout_pendiente: bool
+    puede_comprar: bool
+
+
 __all__ = [
     "ClienteResumen",
+    "DetalleMembresiaCuentaCliente",
     "DetalleMembresiaCliente",
     "EstadoCheckoutPublico",
+    "MembresiaCuentaCliente",
     "PlanMembresiaPublico",
     "RespuestaCheckout",
     "RespuestaListaClientes",

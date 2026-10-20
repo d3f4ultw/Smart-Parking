@@ -12,6 +12,13 @@ export default defineNuxtConfig({
     },
   },
   routeRules: {
+    '/cliente/**': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
     '/admin/empleados': {
       prerender: false,
       headers: {
@@ -29,6 +36,21 @@ export default defineNuxtConfig({
     '/membresias': {
       prerender: false,
       headers: { 'Cache-Control': 'no-store' },
+    },
+    '/cliente/registro': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
+    '/cliente/login': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
     },
     '/membresias/resultado': {
       prerender: false,

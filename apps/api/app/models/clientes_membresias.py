@@ -24,11 +24,12 @@ from app.core.database import Base
 
 
 class Cliente(Base):
-    """Identidad local creada al confirmar un primer cobro de membresia."""
+    """Identidad canonica del directorio, ligada opcionalmente a Stripe."""
 
     __tablename__ = "clientes"
     __table_args__ = (
         UniqueConstraint("stripe_customer_id", name="uq_clientes_stripe_customer"),
+        UniqueConstraint("cuenta_cliente_id", name="uq_clientes_cuenta_cliente"),
         CheckConstraint(
             "nombre_completo IS NULL OR char_length(btrim(nombre_completo)) > 0",
             name="ck_clientes_nombre_no_vacio",
@@ -40,7 +41,15 @@ class Cliente(Base):
         Identity(always=True),
         primary_key=True,
     )
-    stripe_customer_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cuenta_cliente_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "cuentas_clientes.id",
+            name="fk_clientes_cuenta_cliente",
+            ondelete="RESTRICT",
+        ),
+        nullable=True,
+    )
     nombre_completo: Mapped[str | None] = mapped_column(String(255))
     correo_privado: Mapped[str | None] = mapped_column(String(320))
     creado_en: Mapped[datetime] = mapped_column(

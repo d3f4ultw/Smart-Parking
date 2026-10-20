@@ -43,7 +43,9 @@ class EventoTiempoReal(Base):
         CheckConstraint(
             "(recurso_tipo = 'operador' AND "
             "tipo IN ('operador.creado', 'operador.actualizado')) OR "
-            "(recurso_tipo = 'cajon' AND tipo = 'cajon.actualizado')",
+            "(recurso_tipo = 'cajon' AND tipo = 'cajon.actualizado') OR "
+            "(recurso_tipo = 'cliente' AND "
+            "tipo IN ('cliente.registrado', 'membresia.actualizada'))",
             name="ck_eventos_tiempo_real_tipo",
         ),
         CheckConstraint(
@@ -61,10 +63,12 @@ class EventoTiempoReal(Base):
         default="operador",
         server_default="operador",
     )
-    recurso_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    recurso_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     operador_id = synonym("recurso_id")
     tipo: Mapped[str] = mapped_column(String(64), nullable=False)
-    datos: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    datos: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
     ocurrido_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

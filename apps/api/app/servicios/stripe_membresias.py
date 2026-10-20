@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -16,9 +16,14 @@ from app.core.config import Settings
 from app.models import (
     Cliente,
     ConfiguracionEstacionamiento,
+    CuentaCliente,
     EventoStripe,
     FacturaMembresia,
+    IntentoCheckoutCliente,
     Membresia,
+)
+from app.servicios.eventos_directorio_clientes import (
+    registrar_evento_membresia_actualizada,
 )
 
 NOMBRE_PRODUCTO_MEMBRESIA = "Smart Parking - Membresía Mensual"
@@ -138,23 +143,20 @@ def listar_planes_membresia(
 
     if not settings.stripe_price_ids:
         raise StripeNoConfiguradoError
-    planes: list[dict[str, Any]] = []
-    for indice, price_id in enumerate(settings.stripe_price_ids, start=1):
-        price, product = _validar_price_mensual(client, price_id)
-        planes.append(
-            {
-                "plan_id": "mensual" if indice == 1 else f"plan-{indice}",
-                "nombre": _valor(product, "name"),
-                "monto_centavos": _valor(price, "unit_amount"),
-                "moneda": _valor(price, "currency"),
-                "intervalo": _valor(_valor(price, "recurring"), "interval"),
-                "intervalo_cantidad": _valor(
-                    _valor(price, "recurring"),
-                    "interval_count",
-                ),
-            }
-        )
-    return planes
+    price, product = _validar_price_mensual(client, settings.stripe_price_ids[0])
+    return [
+        {
+            "plan_id": "mensual",
+            "nombre": _valor(product, "name"),
+            "monto_centavos": _valor(price, "unit_amount"),
+            "moneda": _valor(price, "currency"),
+            "intervalo": _valor(_valor(price, "recurring"), "interval"),
+            "intervalo_cantidad": _valor(
+                _valor(price, "recurring"),
+                "interval_count",
+            ),
+        }
+    ]
 
 
 def _base_publica(settings: Settings) -> str:
@@ -176,60 +178,60 @@ def crear_checkout_membresia(
     settings: Settings,
     *,
     plan_id: str,
-    clave_idempotencia: UUID,
-) -> str:
-    """Crea Checkout con Price servidor, return URLs fijas y clave estable."""
+    intento_id: UUID,
+    clave_idempotencia: str,
+    expira_en: datetime,
+    correo_cliente: str,
+    stripe_customer_id: str | None,
+) -> dict[str, Any]:
+    """Crea Checkout ligado al intento local con metadata de servidor."""
 
     if plan_id != "mensual" or not settings.stripe_price_ids:
         raise StripeNoConfiguradoError
     price_id = settings.stripe_price_ids[0]
     _validar_price_mensual(client, price_id)
     base = _base_publica(settings)
+    metadata = {"intento_checkout_id": str(intento_id)}
+    parametros: dict[str, Any] = {
+        "mode": "subscription",
+        "line_items": [{"price": price_id, "quantity": 1}],
+        "success_url": (
+            f"{base}/membresias/resultado?session_id={{CHECKOUT_SESSION_ID}}"
+        ),
+        "cancel_url": f"{base}/membresias/resultado?estado=cancelado",
+        "expires_at": int(expira_en.timestamp()),
+        "metadata": metadata,
+        "subscription_data": {"metadata": metadata},
+    }
+    if stripe_customer_id is not None:
+        parametros["customer"] = stripe_customer_id
+    else:
+        parametros["customer_email"] = correo_cliente
     sesion = client.v1.checkout.sessions.create(
-        {
-            "mode": "subscription",
-            "line_items": [{"price": price_id, "quantity": 1}],
-            "success_url": (
-                f"{base}/membresias/resultado?session_id={{CHECKOUT_SESSION_ID}}"
-            ),
-            "cancel_url": f"{base}/membresias/resultado?estado=cancelado",
-            "subscription_data": {
-                "metadata": {"producto": "smart-parking-membresia"},
-            },
-        },
-        {"idempotency_key": str(clave_idempotencia)},
+        cast(Any, parametros),
+        {"idempotency_key": clave_idempotencia},
     )
     url = _valor(sesion, "url")
     parsed = urlsplit(url if isinstance(url, str) else "")
-    if parsed.scheme != "https" or parsed.hostname != "checkout.stripe.com":
-        raise StripeMembresiasError
-    return url
-
-
-def consultar_estado_checkout(
-    client: stripe.StripeClient,
-    db: Session,
-    *,
-    checkout_session_id: str,
-) -> str:
-    """Lee un estado generico sin crear el cliente desde la pagina de retorno."""
-
-    if not checkout_session_id.startswith("cs_test_"):
-        return "no_completado"
-    sesion = client.v1.checkout.sessions.retrieve(checkout_session_id)
+    checkout_session_id = _id_stripe(_valor(sesion, "id"))
     if (
-        _valor(sesion, "mode") != "subscription"
-        or _valor(sesion, "livemode") is True
+        parsed.scheme != "https"
+        or parsed.hostname != "checkout.stripe.com"
+        or checkout_session_id is None
+        or not checkout_session_id.startswith("cs_test_")
+        or _valor(sesion, "livemode", False) is not False
+        or _valor(_valor(sesion, "metadata"), "intento_checkout_id")
+        not in {None, str(intento_id)}
     ):
-        return "no_completado"
-    if _valor(sesion, "status") == "expired":
-        return "no_completado"
-    customer_id = _id_stripe(_valor(sesion, "customer"))
-    if customer_id is not None and db.scalar(
-        select(Cliente.id).where(Cliente.stripe_customer_id == customer_id)
-    ) is not None:
-        return "confirmado"
-    return "pendiente"
+        raise StripeMembresiasError
+    expiracion_stripe = _fecha_stripe(_valor(sesion, "expires_at")) or expira_en
+    return {
+        "checkout_url": url,
+        "checkout_session_id": checkout_session_id,
+        "stripe_customer_id": _id_stripe(_valor(sesion, "customer"))
+        or stripe_customer_id,
+        "expira_en": expiracion_stripe,
+    }
 
 
 def _obtener_invoice_subscription_id(invoice: Any) -> str | None:
@@ -266,11 +268,15 @@ def _sincronizar_subscription(
     *,
     cliente: Cliente,
     subscription_id: str,
+    subscription: Any | None = None,
 ) -> Membresia:
-    subscription = client.v1.subscriptions.retrieve(
-        subscription_id,
-        {"expand": ["items.data.price.product"]},
-    )
+    if subscription is None:
+        subscription = client.v1.subscriptions.retrieve(
+            subscription_id,
+            {"expand": ["items.data.price.product"]},
+        )
+    if _obtener_customer_id(subscription) != cliente.stripe_customer_id:
+        raise StripeMembresiasError
     item = _obtener_item_subscription(subscription)
     price = _valor(item, "price")
     price_id = _id_stripe(price)
@@ -310,6 +316,24 @@ def _sincronizar_subscription(
         .where(Membresia.stripe_subscription_id == subscription_id)
         .with_for_update()
     )
+    estado_anterior = (
+        (
+            membresia.stripe_price_id,
+            membresia.nombre_plan,
+            membresia.monto_centavos,
+            membresia.moneda,
+            membresia.intervalo,
+            membresia.intervalo_cantidad,
+            membresia.estado_stripe,
+            membresia.cancelacion_programada,
+            membresia.fecha_inicio,
+            membresia.periodo_actual_inicio,
+            membresia.periodo_actual_fin,
+            membresia.cancelada_en,
+        )
+        if membresia is not None
+        else None
+    )
     if membresia is None:
         membresia = Membresia(
             cliente_id=cliente.id,
@@ -344,46 +368,152 @@ def _sincronizar_subscription(
         membresia.periodo_actual_fin = periodo_fin
         membresia.cancelada_en = cancelada_en
     db.flush()
+    estado_actual = (
+        membresia.stripe_price_id,
+        membresia.nombre_plan,
+        membresia.monto_centavos,
+        membresia.moneda,
+        membresia.intervalo,
+        membresia.intervalo_cantidad,
+        membresia.estado_stripe,
+        membresia.cancelacion_programada,
+        membresia.fecha_inicio,
+        membresia.periodo_actual_inicio,
+        membresia.periodo_actual_fin,
+        membresia.cancelada_en,
+    )
+    if estado_actual != estado_anterior:
+        registrar_evento_membresia_actualizada(db, cliente_id=cliente.id)
     return membresia
 
 
-def _obtener_o_crear_cliente(
+def _obtener_o_vincular_cliente(
     db: Session,
-    client: stripe.StripeClient,
+    intento: IntentoCheckoutCliente,
+    cuenta: CuentaCliente,
     customer_id: str,
 ) -> Cliente:
-    cliente = db.scalar(
+    cliente_cuenta = db.scalar(
+        select(Cliente)
+        .where(Cliente.cuenta_cliente_id == cuenta.id)
+        .with_for_update()
+    )
+    cliente_stripe = db.scalar(
         select(Cliente)
         .where(Cliente.stripe_customer_id == customer_id)
         .with_for_update()
     )
-    customer = client.v1.customers.retrieve(customer_id)
+    if (
+        cliente_cuenta is not None
+        and cliente_stripe is not None
+        and cliente_cuenta.id != cliente_stripe.id
+    ):
+        raise StripeMembresiasError
+    cliente = cliente_cuenta or cliente_stripe
+    if cliente is not None and cliente.cuenta_cliente_id not in {None, cuenta.id}:
+        raise StripeMembresiasError
+    if cliente_cuenta is not None and cliente_cuenta.stripe_customer_id not in {
+        None,
+        customer_id,
+    }:
+        raise StripeMembresiasError
     if cliente is None:
-        nombre = _valor(customer, "name")
-        correo = _valor(customer, "email")
         cliente = Cliente(
+            cuenta_cliente_id=cuenta.id,
             stripe_customer_id=customer_id,
-            nombre_completo=(
-                nombre.strip()
-                if isinstance(nombre, str) and nombre.strip()
-                else None
+            nombre_completo=" ".join(
+                parte
+                for parte in (
+                    cuenta.nombre,
+                    cuenta.apellido_paterno,
+                    cuenta.apellido_materno,
+                )
+                if parte
             ),
-            correo_privado=(
-                correo.strip().lower()
-                if isinstance(correo, str) and correo.strip()
-                else None
-            ),
+            correo_privado=cuenta.correo,
         )
         db.add(cliente)
         db.flush()
     else:
-        nombre = _valor(customer, "name")
-        correo = _valor(customer, "email")
-        if isinstance(nombre, str) and nombre.strip():
-            cliente.nombre_completo = nombre.strip()
-        if isinstance(correo, str) and correo.strip():
-            cliente.correo_privado = correo.strip().lower()
+        cliente.cuenta_cliente_id = cuenta.id
+        if cliente.stripe_customer_id is None:
+            cliente.stripe_customer_id = customer_id
+        cliente.nombre_completo = " ".join(
+            parte
+            for parte in (
+                cuenta.nombre,
+                cuenta.apellido_paterno,
+                cuenta.apellido_materno,
+            )
+            if parte
+        )
+        cliente.correo_privado = cuenta.correo
+    intento.stripe_customer_id = customer_id
     return cliente
+
+
+def _validar_intento_checkout(
+    db: Session,
+    client: stripe.StripeClient,
+    *,
+    subscription: Any,
+    customer_id: str,
+    subscription_id: str,
+    factura: Any,
+) -> tuple[IntentoCheckoutCliente, CuentaCliente] | None:
+    """Vincula solo una compra comprobada por metadata y Checkout completo."""
+
+    metadata_id = _valor(
+        _valor(subscription, "metadata"),
+        "intento_checkout_id",
+    )
+    if metadata_id is None:
+        return None
+    try:
+        intento_id = UUID(str(metadata_id))
+    except (TypeError, ValueError):
+        raise StripeMembresiasError from None
+
+    intento = db.scalar(
+        select(IntentoCheckoutCliente)
+        .where(IntentoCheckoutCliente.id == intento_id)
+        .with_for_update()
+    )
+    if (
+        intento is None
+        or intento.estado not in {"creado", "abierto", "confirmado"}
+        or intento.checkout_session_id is None
+        or intento.stripe_idempotency_key == ""
+        or (intento.stripe_customer_id not in {None, customer_id})
+        or (intento.stripe_subscription_id not in {None, subscription_id})
+    ):
+        raise StripeMembresiasError
+    es_invoice_inicial = _valor(factura, "billing_reason") == "subscription_create"
+    if intento.estado != "confirmado" and not es_invoice_inicial:
+        raise StripeMembresiasError
+
+    sesion = client.v1.checkout.sessions.retrieve(intento.checkout_session_id)
+    metadata_sesion = _valor(sesion, "metadata")
+    if (
+        _valor(sesion, "id") != intento.checkout_session_id
+        or _valor(sesion, "mode") != "subscription"
+        or _valor(sesion, "livemode") is not False
+        or _valor(sesion, "status") != "complete"
+        or _valor(sesion, "payment_status") != "paid"
+        or _valor(metadata_sesion, "intento_checkout_id") != str(intento.id)
+        or _obtener_customer_id(sesion) != customer_id
+        or _id_stripe(_valor(sesion, "subscription")) != subscription_id
+        or _obtener_customer_id(subscription) != customer_id
+    ):
+        raise StripeMembresiasError
+    cuenta = db.scalar(
+        select(CuentaCliente)
+        .where(CuentaCliente.id == intento.cuenta_cliente_id)
+        .with_for_update()
+    )
+    if cuenta is None or not cuenta.esta_activa:
+        raise StripeMembresiasError
+    return intento, cuenta
 
 
 def _upsert_factura(
@@ -460,30 +590,82 @@ def _procesar_invoice(
     if invoice_id is None:
         raise StripeMembresiasError
     invoice = client.v1.invoices.retrieve(invoice_id)
+    if _id_stripe(_valor(invoice, "id")) != invoice_id:
+        raise StripeMembresiasError
     customer_id = _obtener_customer_id(invoice) or _obtener_customer_id(objeto_evento)
     if customer_id is None:
         raise StripeMembresiasError
+    customer_evento = _obtener_customer_id(objeto_evento)
+    if customer_evento is not None and customer_evento != customer_id:
+        raise StripeMembresiasError
     subscription_id = _obtener_invoice_subscription_id(invoice)
+    subscription_evento = _obtener_invoice_subscription_id(objeto_evento)
+    if (
+        subscription_id is not None
+        and subscription_evento is not None
+        and subscription_id != subscription_evento
+    ):
+        raise StripeMembresiasError
     if subscription_id is None:
-        subscription_id = _obtener_invoice_subscription_id(objeto_evento)
-    estado_canonico = _valor(invoice, "status")
-    pagada = estado_canonico == "paid" or (
-        evento_tipo == "invoice.paid"
-        and _valor(objeto_evento, "status") == "paid"
-    )
+        subscription_id = subscription_evento
+    pagada = evento_tipo == "invoice.paid" and _valor(invoice, "status") == "paid"
     membresia: Membresia | None = None
-    if pagada and int(_valor(invoice, "amount_paid", 0) or 0) > 0:
-        if subscription_id is None:
-            raise StripeMembresiasError
-        cliente = _obtener_o_crear_cliente(db, client, customer_id)
-        membresia = _sincronizar_subscription(
-            db,
-            client,
-            settings,
-            cliente=cliente,
-            subscription_id=subscription_id,
+    suscripcion_existente: Membresia | None = None
+    if subscription_id is not None:
+        suscripcion_existente = db.scalar(
+            select(Membresia)
+            .where(Membresia.stripe_subscription_id == subscription_id)
+            .with_for_update()
         )
-    elif subscription_id is not None:
+
+    if pagada and int(_valor(invoice, "amount_paid", 0) or 0) > 0 and subscription_id:
+        subscription = client.v1.subscriptions.retrieve(
+            subscription_id,
+            {"expand": ["items.data.price.product"]},
+        )
+        if _obtener_customer_id(subscription) != customer_id:
+            raise StripeMembresiasError
+        if suscripcion_existente is not None:
+            cliente = db.get(Cliente, suscripcion_existente.cliente_id)
+            if cliente is None or cliente.stripe_customer_id != customer_id:
+                raise StripeMembresiasError
+            membresia = _sincronizar_subscription(
+                db,
+                client,
+                settings,
+                cliente=cliente,
+                subscription_id=subscription_id,
+                subscription=subscription,
+            )
+        else:
+            intento_y_cuenta = _validar_intento_checkout(
+                db,
+                client,
+                subscription=subscription,
+                customer_id=customer_id,
+                subscription_id=subscription_id,
+                factura=invoice,
+            )
+            if intento_y_cuenta is not None:
+                intento, cuenta = intento_y_cuenta
+                cliente = _obtener_o_vincular_cliente(
+                    db,
+                    intento,
+                    cuenta,
+                    customer_id,
+                )
+                membresia = _sincronizar_subscription(
+                    db,
+                    client,
+                    settings,
+                    cliente=cliente,
+                    subscription_id=subscription_id,
+                    subscription=subscription,
+                )
+                intento.stripe_customer_id = customer_id
+                intento.stripe_subscription_id = subscription_id
+                intento.estado = "confirmado"
+    elif subscription_id is not None and suscripcion_existente is not None:
         membresia = db.scalar(
             select(Membresia)
             .where(Membresia.stripe_subscription_id == subscription_id)
@@ -619,7 +801,6 @@ __all__ = [
     "MembresiasNoDisponiblesError",
     "StripeMembresiasError",
     "StripeNoConfiguradoError",
-    "consultar_estado_checkout",
     "crear_checkout_membresia",
     "crear_cliente_stripe",
     "exigir_membresias_disponibles",

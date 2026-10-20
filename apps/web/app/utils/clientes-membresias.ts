@@ -6,10 +6,13 @@ export type EstadoMembresia =
   | 'inactiva'
   | 'pendiente'
 
+export type EstadoMembresiaCliente = EstadoMembresia | 'sin_membresia'
+export type FiltroEstadoClientes = 'todos' | 'sin_membresia' | 'activa' | 'cancelada'
+
 export interface ClienteResumen {
-  codigo_cliente: string
+  codigo_cliente: string | null
   nombre_completo: string
-  estado_membresia: EstadoMembresia
+  estado_membresia: EstadoMembresiaCliente
 }
 
 export interface RespuestaListaClientes {
@@ -44,6 +47,25 @@ export interface RespuestaPlanesMembresia {
   planes: PlanMembresia[]
 }
 
+export interface MembresiaCliente {
+  plan: string
+  monto_centavos: number
+  moneda: string
+  intervalo: string
+  intervalo_cantidad: number
+  fecha_inicio: string | null
+  periodo_actual_inicio: string | null
+  periodo_actual_fin: string | null
+  cancelacion_programada: boolean
+}
+
+export interface RespuestaMembresiaCliente {
+  estado: EstadoMembresiaCliente
+  membresia: MembresiaCliente | null
+  checkout_pendiente: boolean
+  puede_comprar: boolean
+}
+
 export interface RespuestaCheckout {
   checkout_url: string
 }
@@ -66,14 +88,22 @@ export function obtenerPaginaSolicitadaClientes(valor: unknown): number {
   return Number.isSafeInteger(pagina) ? pagina : 1
 }
 
-export function etiquetaEstadoMembresia(estado: EstadoMembresia): string {
-  const etiquetas: Record<EstadoMembresia, string> = {
+export function obtenerFiltroEstadoSolicitadoClientes(valor: unknown): FiltroEstadoClientes {
+  if (valor === 'sin_membresia' || valor === 'activa' || valor === 'cancelada') {
+    return valor
+  }
+  return 'todos'
+}
+
+export function etiquetaEstadoMembresia(estado: EstadoMembresiaCliente): string {
+  const etiquetas: Record<EstadoMembresiaCliente, string> = {
     activa: 'Activa',
     cancelacion_programada: 'Cancelación programada',
     pago_vencido: 'Pago vencido',
     cancelada: 'Cancelada',
     inactiva: 'Inactiva',
     pendiente: 'Pendiente',
+    sin_membresia: 'Sin membresía',
   }
   return etiquetas[estado]
 }

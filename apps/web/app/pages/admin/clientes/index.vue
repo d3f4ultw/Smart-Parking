@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
+import { usarEventosTiempoReal } from '~/utils/eventos-tiempo-real'
 import {
   etiquetaEstadoMembresia,
   formatearFechaMembresia,
   formatearPrecioMembresia,
   mapearErrorClientes,
   obtenerEstadoErrorClientes,
+  obtenerFiltroEstadoSolicitadoClientes,
   obtenerPaginaSolicitadaClientes,
   type DetalleMembresiaCliente,
+  type FiltroEstadoClientes,
   type RespuestaListaClientes,
 } from '~/utils/clientes-membresias'
 
@@ -25,6 +28,7 @@ const route = useRoute()
 const router = useRouter()
 const { listarClientes, consultarDetalle } = useClientesMembresias()
 const { limpiarSesion } = useSesion()
+const eventosTiempoReal = usarEventosTiempoReal()
 const dialogoDetalle = ref<HTMLDialogElement | null>(null)
 const botonDetalle = ref<HTMLButtonElement | null>(null)
 const codigoClienteCargando = ref<string | null>(null)
@@ -34,6 +38,9 @@ const cargandoDetalle = ref(false)
 const errorDetalle = ref('')
 const paginaSolicitada = computed(() =>
   obtenerPaginaSolicitadaClientes(route.query.pagina),
+)
+const filtroEstado = computed(() =>
+  obtenerFiltroEstadoSolicitadoClientes(route.query.estado),
 )
 
 function listaVacia(): RespuestaListaClientes {
@@ -52,7 +59,7 @@ const carga = await useAsyncData<ResultadoCarga>(
     try {
       return {
         tipo: 'exito',
-        lista: await listarClientes(paginaSolicitada.value, signal),
+        lista: await listarClientes(paginaSolicitada.value, filtroEstado.value, signal),
       }
     } catch (error: unknown) {
       const codigo = obtenerEstadoErrorClientes(error)
@@ -66,7 +73,7 @@ const carga = await useAsyncData<ResultadoCarga>(
   {
     default: (): ResultadoCarga => ({ tipo: 'exito', lista: listaVacia() }),
     dedupe: 'cancel',
-    watch: [paginaSolicitada],
+    watch: [paginaSolicitada, filtroEstado],
   },
 )
 
@@ -77,6 +84,8 @@ const mensajeErrorCarga = computed(() =>
   carga.data.value?.tipo === 'error' ? carga.data.value.mensaje : '',
 )
 const paginasVisibles = computed(() => Math.max(1, lista.value.total_paginas))
+let temporizadorRefresco: ReturnType<typeof setTimeout> | null = null
+let refrescoSolicitado = false
 
 async function redirigirSesionInvalida(error: unknown): Promise<boolean> {
   if (obtenerEstadoErrorClientes(error) !== 401) {
@@ -94,8 +103,54 @@ async function cambiarPagina(pagina: number) {
   }
   await router.push({
     path: route.path,
-    query: pagina === 1 ? {} : { ...route.query, pagina: String(pagina) },
+    query: construirQueryLista(pagina, filtroEstado.value),
   })
+}
+
+function construirQueryLista(pagina: number, estado: FiltroEstadoClientes) {
+  const query = { ...route.query }
+  delete query.pagina
+  delete query.estado
+  if (pagina > 1) {
+    query.pagina = String(pagina)
+  }
+  if (estado !== 'todos') {
+    query.estado = estado
+  }
+  return query
+}
+
+async function cambiarFiltroEstado(estado: FiltroEstadoClientes) {
+  if (estado === filtroEstado.value) {
+    return
+  }
+  await router.push({
+    path: route.path,
+    query: construirQueryLista(1, estado),
+  })
+}
+
+function manejarCambioFiltro(event: Event) {
+  const control = event.currentTarget
+  if (!(control instanceof HTMLSelectElement)) {
+    return
+  }
+  void cambiarFiltroEstado(obtenerFiltroEstadoSolicitadoClientes(control.value))
+}
+
+function programarRefrescoLista() {
+  refrescoSolicitado = true
+  if (temporizadorRefresco !== null) {
+    clearTimeout(temporizadorRefresco)
+  }
+  temporizadorRefresco = setTimeout(() => {
+    temporizadorRefresco = null
+    if (carga.pending.value) {
+      return
+    }
+    refrescoSolicitado = false
+    void carga.refresh()
+  }, 150)
 }
 
 async function abrirDetalle(codigoCliente: string, boton: HTMLButtonElement) {
@@ -133,6 +188,27 @@ async function restaurarFoco() {
   await nextTick()
   botonDetalle.value?.focus()
 }
+
+const suscripcionEventos = eventosTiempoReal.suscribir('0', {
+  alActualizarOperador: () => undefined,
+  alCrearOperador: () => undefined,
+  alActualizarDirectorioClientes: programarRefrescoLista,
+  alActualizarMembresias: programarRefrescoLista,
+  alResync: programarRefrescoLista,
+})
+
+watch(carga.pending, (pendiente) => {
+  if (!pendiente && refrescoSolicitado && temporizadorRefresco === null) {
+    programarRefrescoLista()
+  }
+})
+
+onBeforeUnmount(() => {
+  suscripcionEventos.detener()
+  if (temporizadorRefresco !== null) {
+    clearTimeout(temporizadorRefresco)
+  }
+})
 </script>
 
 <template>
@@ -152,8 +228,23 @@ async function restaurarFoco() {
       <div class="panel-heading">
         <div>
           <h2 id="table-title">Clientes</h2>
-          <p>El registro se crea después de confirmar el primer pago.</p>
+          <p>El estado refleja la membresía asociada a cada cuenta.</p>
         </div>
+        <label class="filter-control">
+          <span>Filtrar por estado</span>
+          <select
+            :value="filtroEstado"
+            :disabled="carga.pending.value"
+            aria-label="Filtrar clientes por membresía"
+            aria-controls="clientes-tabla"
+            @change="manejarCambioFiltro"
+          >
+            <option value="todos">Todos</option>
+            <option value="sin_membresia">Sin membresía</option>
+            <option value="activa">Activa</option>
+            <option value="cancelada">Cancelada</option>
+          </select>
+        </label>
       </div>
 
       <div v-if="carga.pending.value && lista.clientes.length === 0" class="notice" role="status">
@@ -167,11 +258,11 @@ async function restaurarFoco() {
       </div>
       <div v-else-if="lista.clientes.length === 0" class="empty-state">
         <span class="empty-icon" aria-hidden="true">C</span>
-        <h3>Aún no hay clientes</h3>
-        <p>Los clientes aparecerán cuando Stripe confirme el primer pago de una membresía.</p>
+        <h3>{{ filtroEstado === 'todos' ? 'Aún no hay clientes' : 'No hay clientes con este filtro' }}</h3>
+        <p>Prueba otro estado o vuelve más tarde para consultar el directorio.</p>
       </div>
       <div v-else class="table-scroll" :aria-busy="carga.pending.value">
-        <table>
+        <table id="clientes-tabla">
           <thead>
             <tr>
               <th scope="col">Código</th>
@@ -181,8 +272,8 @@ async function restaurarFoco() {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="cliente in lista.clientes" :key="cliente.codigo_cliente">
-              <td class="code-cell">{{ cliente.codigo_cliente }}</td>
+            <tr v-for="(cliente, indice) in lista.clientes" :key="cliente.codigo_cliente ?? indice">
+              <td class="code-cell">{{ cliente.codigo_cliente ?? '—' }}</td>
               <td class="name-cell">{{ cliente.nombre_completo }}</td>
               <td>
                 <span class="status-pill" :class="`status-${cliente.estado_membresia}`">
@@ -192,6 +283,7 @@ async function restaurarFoco() {
               </td>
               <td class="action-cell">
                 <button
+                  v-if="cliente.codigo_cliente !== null"
                   class="text-button"
                   type="button"
                   :disabled="cargandoDetalle"
@@ -201,6 +293,7 @@ async function restaurarFoco() {
                 >
                   {{ codigoClienteCargando === cliente.codigo_cliente ? 'Cargando…' : 'Ver detalles' }}
                 </button>
+                <span v-else class="action-unavailable">—</span>
               </td>
             </tr>
           </tbody>
@@ -296,6 +389,10 @@ h1 { margin-bottom: .35rem; font-size: clamp(1.6rem, 3vw, 2.15rem); letter-spaci
 .count-chip { flex: none; padding: .45rem .75rem; border: 1px solid #e7e1ec; border-radius: 999px; background: #fbfafc; color: #554965; font-size: .76rem; font-weight: 750; }
 .panel { overflow: hidden; border: 1px solid #e8e3eb; border-radius: 1rem; background: #fff; box-shadow: 0 10px 30px rgb(31 20 42 / 4%); }
 .panel-heading { min-height: 5rem; padding: 1.15rem 1.35rem; border-bottom: 1px solid #eeeaf1; }
+.filter-control { display: grid; flex: 0 0 auto; gap: .3rem; color: #756d7c; font-size: .68rem; font-weight: 750; }
+.filter-control select { min-width: 11rem; min-height: 2.55rem; padding: .45rem 2rem .45rem .65rem; color: #463d4f; background: #fff; border: 1px solid #ded8e4; border-radius: .55rem; font: inherit; font-size: .77rem; }
+.filter-control select:focus-visible { outline: 3px solid rgb(92 58 134 / 22%); outline-offset: 2px; }
+.filter-control select:disabled { color: #8d8793; background: #f8f7f9; }
 .panel-heading h2 { margin-bottom: .3rem; font-size: 1rem; }
 .panel-heading p { font-size: .78rem; }
 .table-scroll { overflow-x: auto; }
@@ -307,6 +404,7 @@ tbody tr:hover { background: #fcfbfd; }
 .name-cell { min-width: 14rem; font-weight: 650; }
 .action-cell { text-align: right; }
 .text-button { padding: .35rem .55rem; border: 0; border-radius: .4rem; background: transparent; color: #6a4292; font: inherit; font-size: .78rem; font-weight: 750; cursor: pointer; }
+.action-unavailable { color: #98929f; font-size: .78rem; }
 .text-button:hover { background: #f5eff9; }
 .text-button:disabled { color: #827b88; cursor: wait; }
 .status-pill { display: inline-flex; align-items: center; gap: .4rem; padding: .3rem .55rem; border: 1px solid transparent; border-radius: 999px; font-size: .7rem; font-weight: 750; white-space: nowrap; }
@@ -316,6 +414,7 @@ tbody tr:hover { background: #fcfbfd; }
 .status-pago_vencido { border-color: #f1c9b9; background: #fff2ed; color: #a64d2c; }
 .status-cancelada, .status-inactiva { border-color: #e4dfe8; background: #f7f5f8; color: #6c6672; }
 .status-pendiente { border-color: #d9d0ed; background: #f5f1fc; color: #6a5191; }
+.status-sin_membresia { border-color: #e4dfe8; background: #f7f5f8; color: #6c6672; }
 .notice { min-height: 4rem; justify-content: flex-start; padding: 1rem 1.3rem; color: #625b68; font-size: .84rem; }
 .notice-error { color: #a44333; }
 .empty-state { display: grid; justify-items: center; padding: 3.2rem 1.5rem; text-align: center; }
@@ -341,6 +440,6 @@ tbody tr:hover { background: #fcfbfd; }
 .detail-grid dd { margin: 0; color: #30283a; font-size: .85rem; font-weight: 750; }
 .detail-status { grid-column: 1 / -1; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
-@media (max-width: 42rem) { .page-heading { align-items: flex-start; flex-direction: column; } th, td { padding: .8rem .75rem; } .detail-grid { grid-template-columns: minmax(0, 1fr); } .detail-status { grid-column: auto; } .pagination-footer { align-items: flex-start; flex-direction: column; } .pagination-actions { width: 100%; } }
+@media (max-width: 42rem) { .page-heading { align-items: flex-start; flex-direction: column; } .panel-heading { align-items: flex-start; flex-direction: column; } .filter-control, .filter-control select { width: 100%; } th, td { padding: .8rem .75rem; } .detail-grid { grid-template-columns: minmax(0, 1fr); } .detail-status { grid-column: auto; } .pagination-footer { align-items: flex-start; flex-direction: column; } .pagination-actions { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>

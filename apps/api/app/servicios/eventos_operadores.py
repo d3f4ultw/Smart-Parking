@@ -24,11 +24,18 @@ TipoEventoTiempoReal = Literal[
     "operador.creado",
     "operador.actualizado",
     "cajon.actualizado",
+    "cliente.registrado",
+    "membresia.actualizada",
 ]
 
 TIPOS_EVENTO_OPERADOR = frozenset({"operador.creado", "operador.actualizado"})
 TIPOS_EVENTO_CAJON = frozenset({"cajon.actualizado"})
-TIPOS_EVENTO_TIEMPO_REAL = TIPOS_EVENTO_OPERADOR | TIPOS_EVENTO_CAJON
+TIPOS_EVENTO_CLIENTE = frozenset({"cliente.registrado", "membresia.actualizada"})
+TIPOS_EVENTO_TIEMPO_REAL = (
+    TIPOS_EVENTO_OPERADOR
+    | TIPOS_EVENTO_CAJON
+    | TIPOS_EVENTO_CLIENTE
+)
 EVENTOS_POR_ROL: dict[str, frozenset[str]] = {
     "OPERADOR": TIPOS_EVENTO_CAJON,
     "OWNER": TIPOS_EVENTO_TIEMPO_REAL,
@@ -115,9 +122,15 @@ def registrar_evento_tiempo_real(
     combinacion_cajon = (
         recurso_tipo == "cajon" and tipo == "cajon.actualizado" and datos is not None
     )
-    if recurso_id <= 0 or not (combinacion_operador or combinacion_cajon):
+    combinacion_cliente = (
+        recurso_tipo == "cliente"
+        and tipo in TIPOS_EVENTO_CLIENTE
+        and datos is None
+    )
+    if recurso_id <= 0 or not (
+        combinacion_operador or combinacion_cajon or combinacion_cliente
+    ):
         raise ValueError("El evento de tiempo real no es valido.")
-
     ultimo_id = db.scalar(
         update(EstadoEventosTiempoReal)
         .where(EstadoEventosTiempoReal.id == 1)
@@ -442,9 +455,11 @@ def consultar_lote_eventos_usuario(
                 id=fila.id,
                 tipo=cast(TipoEventoTiempoReal, fila.tipo),
                 recurso_tipo=fila.recurso_tipo,
-                recurso_id=fila.recurso_id,
+                recurso_id=(
+                    1 if fila.tipo in TIPOS_EVENTO_CLIENTE else fila.recurso_id
+                ),
                 ocurrido_en=fila.ocurrido_en.isoformat(),
-                datos=fila.datos,
+                datos=fila.datos if fila.tipo in TIPOS_EVENTO_CAJON else None,
             )
             for fila in filas
         )
@@ -475,6 +490,7 @@ __all__ = [
     "SesionTiempoRealNoValidaError",
     "TIPOS_EVENTO_TIEMPO_REAL",
     "TIPOS_EVENTO_CAJON",
+    "TIPOS_EVENTO_CLIENTE",
     "TIPOS_EVENTO_OPERADOR",
     "TipoEventoTiempoReal",
     "TipoEventoOperador",

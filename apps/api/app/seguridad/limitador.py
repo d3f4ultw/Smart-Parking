@@ -190,6 +190,10 @@ limitador_confirmacion_desvinculacion = LimitadorActivaciones(
     limite_origen=30,
     limite_token=5,
 )
+limitador_registro_clientes = LimitadorAutenticacion(
+    limite_origen=MAXIMO_INTENTOS_POR_ORIGEN,
+    limite_correo=MAXIMO_INTENTOS_POR_CORREO,
+)
 
 
 __all__ = [
@@ -203,5 +207,6 @@ __all__ = [
     "limitador_activaciones",
     "limitador_autenticacion",
     "limitador_confirmacion_desvinculacion",
+    "limitador_registro_clientes",
     "limitador_solicitud_desvinculacion",
 ]

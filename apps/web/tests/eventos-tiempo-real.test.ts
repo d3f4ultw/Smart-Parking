@@ -280,6 +280,98 @@ test('cajon.actualizado se entrega a su manejador y se reproduce desde el buffer
   controlador.detener()
 })
 
+test('eventos administrativos comparten un stream e invalidan solo sus directorios', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  const invalidaciones = {
+    clientes: 0,
+    membresias: 0,
+  }
+  const controlador = crearControladorEventosTiempoReal({
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  const suscripcion = controlador.suscribir('10', {
+    ...manejadores(),
+    alActualizarDirectorioClientes: () => invalidaciones.clientes += 1,
+    alActualizarMembresias: () => invalidaciones.membresias += 1,
+  })
+  controlador.iniciar()
+  assert.equal(fuentes.length, 1)
+  const fuente = fuentes[0]!
+  fuente.abrir()
+
+  let cursorEvento = 10
+  const emitir = (tipo: string, recurso_tipo: string, recurso_id: number, extra = {}) => {
+    cursorEvento += 1
+    fuente.emitir(
+      tipo,
+      JSON.stringify({
+        recurso_tipo,
+        recurso_id,
+        ocurrido_en: '2026-10-20T12:00:00Z',
+        ...extra,
+      }),
+      String(cursorEvento),
+    )
+  }
+  emitir('cliente.registrado', 'cliente', 1)
+  emitir('membresia.actualizada', 'cliente', 1)
+
+  assert.deepEqual(invalidaciones, {
+    clientes: 1,
+    membresias: 1,
+  })
+  suscripcion.detener()
+  controlador.detener()
+})
+
+test('un resync tras perder el buffer evita entregar invalidaciones incompletas', () => {
+  const fuentes: FuenteEventosFalsa[] = []
+  let resyncs = 0
+  let invalidacionesClientes = 0  const controlador = crearControladorEventosTiempoReal({
+    limiteBuffer: 1,
+    crearFuente: (url) => {
+      const fuente = new FuenteEventosFalsa(url)
+      fuentes.push(fuente)
+      return fuente as unknown as EventSource
+    },
+    alPerderSesion: () => {},
+  })
+  controlador.iniciar()
+  const fuente = fuentes[0]!
+  fuente.abrir()
+  fuente.emitir(
+    'cliente.registrado',
+    JSON.stringify({
+      recurso_tipo: 'cliente',
+      recurso_id: 1,
+      ocurrido_en: '2026-10-20T12:00:00Z',
+    }),
+    '11',
+  )
+  fuente.emitir(
+    'membresia.actualizada',
+    JSON.stringify({
+      recurso_tipo: 'cliente',
+      recurso_id: 1,
+      ocurrido_en: '2026-10-20T12:00:00Z',
+    }),
+    '12',
+  )
+
+  controlador.suscribir('10', {
+    ...manejadores([], [], []),
+    alResync: () => resyncs += 1,
+    alActualizarDirectorioClientes: () => invalidacionesClientes += 1,  })
+
+  assert.equal(resyncs, 1)
+  assert.equal(invalidacionesClientes, 0)  controlador.detener()
+})
+
 test('event IDs older than the last accepted event cannot regress the snapshot', () => {
   const fuentes: FuenteEventosFalsa[] = []
   let respuesta = listaCajonesPrueba('10')

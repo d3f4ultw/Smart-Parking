@@ -1,13 +1,16 @@
 import {
   createError,
   getRequestHeader,
-  getRequestURL,
   getRouterParam,
-  readBody,
-  sendProxy,
   setResponseHeader,
   type H3Event,
 } from 'h3'
+
+import {
+  exigirSinParametros,
+  leerObjetoJsonCliente,
+  solicitarApiCliente,
+} from './proxy-clientes'
 
 const RUTA_API_MEMBRESIAS = '/api/membresias'
 const CLAVE_IDEMPOTENCIA = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -17,60 +20,32 @@ function errorSolicitud(statusCode: number, statusMessage: string): never {
   throw createError({ statusCode, statusMessage })
 }
 
-function obtenerUrlApi(event: H3Event, ruta: string): string {
-  const base = useRuntimeConfig(event).apiInternalBaseUrl.replace(/\/+$/, '')
-  return base + ruta
-}
-
-function exigirOrigenMismoSitio(event: H3Event): void {
-  const origin = getRequestHeader(event, 'origin')
-  const esperado = useRuntimeConfig(event).public.managementOrigin
-  if (origin === undefined || new URL(origin).origin !== new URL(esperado).origin) {
-    errorSolicitud(403, 'La solicitud de compra no es válida')
-  }
-}
-
 export function consultarPlanesMembresia(event: H3Event) {
-  setResponseHeader(event, 'cache-control', 'no-store')
-  if (getRequestURL(event).search) {
-    errorSolicitud(422, 'La consulta de planes no es válida')
-  }
-  return sendProxy(event, obtenerUrlApi(event, `${RUTA_API_MEMBRESIAS}/planes`), {
-    fetchOptions: { method: 'GET' },
+  exigirSinParametros(event, 'La consulta de planes no es válida')
+  return solicitarApiCliente(event, {
+    ruta: `${RUTA_API_MEMBRESIAS}/planes`,
+    metodo: 'GET',
   })
 }
 
 export async function iniciarCheckoutMembresia(event: H3Event) {
   setResponseHeader(event, 'cache-control', 'no-store')
-  exigirOrigenMismoSitio(event)
-  const contentType = getRequestHeader(event, 'content-type')
-  if (contentType === undefined || !/^application\/json(?:\s*;|\s*$)/i.test(contentType)) {
-    errorSolicitud(415, 'Se requiere una solicitud JSON')
-  }
+  exigirSinParametros(event)
+  const body = await leerObjetoJsonCliente(event, ['plan_id'])
   const idempotencyKey = getRequestHeader(event, 'idempotency-key')
   if (idempotencyKey === undefined || !CLAVE_IDEMPOTENCIA.test(idempotencyKey)) {
     errorSolicitud(422, 'Se requiere una clave de compra válida')
   }
-  const body: unknown = await readBody(event)
-  if (
-    body === null
-    || typeof body !== 'object'
-    || Array.isArray(body)
-    || Object.keys(body).length !== 1
-    || !Object.hasOwn(body, 'plan_id')
-    || (body as Record<string, unknown>).plan_id !== 'mensual'
-  ) {
+  if (body.plan_id !== 'mensual') {
     errorSolicitud(422, 'El plan solicitado no está disponible')
   }
-  return sendProxy(event, obtenerUrlApi(event, `${RUTA_API_MEMBRESIAS}/checkout`), {
-    fetchOptions: {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'idempotency-key': idempotencyKey.toLowerCase(),
-      },
-      body: JSON.stringify({ plan_id: 'mensual' }),
-    },
+  return solicitarApiCliente(event, {
+    ruta: `${RUTA_API_MEMBRESIAS}/checkout`,
+    metodo: 'POST',
+    incluirSesion: true,
+    exigirOrigen: true,
+    idempotencyKey: idempotencyKey.toLowerCase(),
+    cuerpo: { plan_id: 'mensual' },
   })
 }
 
@@ -80,15 +55,10 @@ export function consultarEstadoCheckout(event: H3Event) {
   if (sessionId === undefined || !SESSION_ID_TEST.test(sessionId)) {
     errorSolicitud(404, 'El estado de compra no está disponible')
   }
-  if (getRequestURL(event).search) {
-    errorSolicitud(422, 'La consulta de compra no es válida')
-  }
-  return sendProxy(
-    event,
-    obtenerUrlApi(
-      event,
-      `${RUTA_API_MEMBRESIAS}/checkout/${encodeURIComponent(sessionId)}/estado`,
-    ),
-    { fetchOptions: { method: 'GET' } },
-  )
+  exigirSinParametros(event, 'La consulta de compra no es válida')
+  return solicitarApiCliente(event, {
+    ruta: `${RUTA_API_MEMBRESIAS}/checkout/${encodeURIComponent(sessionId)}/estado`,
+    metodo: 'GET',
+    incluirSesion: true,
+  })
 }

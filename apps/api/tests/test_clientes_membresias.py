@@ -25,11 +25,14 @@ from app.core.config import Settings
 from app.core.database import get_db
 from app.models import (
     Cliente,
+    CuentaCliente,
     EventoStripe,
     FacturaMembresia,
+    IntentoCheckoutCliente,
     Membresia,
     RolUsuario,
     Sesion,
+    SesionCliente,
     Usuario,
 )
 from app.seguridad.sesiones import hash_token_sesion
@@ -138,6 +141,28 @@ def crear_usuario(db: Session, rol: str) -> tuple[int, str]:
     return usuario_id, token
 
 
+def crear_sesion_cliente(db: Session) -> str:
+    cuenta = CuentaCliente(
+        nombre="Prueba",
+        apellido_paterno="Membresias",
+        apellido_materno="Cliente",
+        correo=f"cliente-{uuid4().hex}@example.invalid",
+        contrasena_hash="hash-sintetico-membresias",
+    )
+    db.add(cuenta)
+    db.flush()
+    token = secrets.token_urlsafe(32)
+    db.add(
+        SesionCliente(
+            cuenta_cliente_id=cuenta.id,
+            token_hash=hash_token_sesion(token),
+            expira_en=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+    db.commit()
+    return token
+
+
 def crear_price() -> dict[str, object]:
     return {
         "id": "price_testmonthly",
@@ -217,10 +242,16 @@ class FakeStripeService:
         def crear_checkout(
             params: dict[str, object],
             options: dict[str, object],
-        ) -> dict[str, str]:
+        ) -> dict[str, object]:
             self.params_checkout = params
             self.opciones_checkout = options
-            return {"url": "https://checkout.stripe.com/c/pay/cs_test_synthetic"}
+            return {
+                "id": "cs_test_synthetic",
+                "url": "https://checkout.stripe.com/c/pay/cs_test_synthetic",
+                "livemode": False,
+                "metadata": params["metadata"],
+                "expires_at": params["expires_at"],
+            }
 
         self.v1 = SimpleNamespace(
             prices=SimpleNamespace(retrieve=recuperar_price),
@@ -479,6 +510,7 @@ def test_checkout_usa_solo_price_configurado_y_clave_idempotente(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cambiar_modalidad_estacionamiento(db, "PUBLICO", revision_esperada=0)
+    token_sesion = crear_sesion_cliente(db)
     settings = crear_settings(webhook_secret=None)
     stripe_client = FakeStripeService()
     monkeypatch.setattr(rutas_clientes, "get_settings", lambda: settings)
@@ -487,17 +519,24 @@ def test_checkout_usa_solo_price_configurado_y_clave_idempotente(
         "crear_cliente_stripe",
         lambda _settings: stripe_client,
     )
+    client.cookies.set("smart_parking_customer_session", token_sesion)
     clave = uuid4()
     no_price = client.post(
         "/api/membresias/checkout",
-        headers={"Idempotency-Key": str(clave)},
+        headers={
+            "Idempotency-Key": str(clave),
+            "Origin": "http://localhost:3000",
+        },
         json={"plan_id": "mensual", "price_id": "price_inventado"},
     )
     assert no_price.status_code == 422
 
     respuesta = client.post(
         "/api/membresias/checkout",
-        headers={"Idempotency-Key": str(clave)},
+        headers={
+            "Idempotency-Key": str(clave),
+            "Origin": "http://localhost:3000",
+        },
         json={"plan_id": "mensual"},
     )
     assert respuesta.status_code == 200
@@ -509,11 +548,18 @@ def test_checkout_usa_solo_price_configurado_y_clave_idempotente(
     assert stripe_client.params_checkout["line_items"] == [
         {"price": "price_testmonthly", "quantity": 1}
     ]
-    assert stripe_client.opciones_checkout == {"idempotency_key": str(clave)}
+    intento = db.scalar(select(IntentoCheckoutCliente))
+    assert intento is not None
+    assert intento.clave_solicitud == clave
+    assert intento.stripe_idempotency_key.startswith("sp_checkout_cliente_")
+    assert stripe_client.opciones_checkout == {
+        "idempotency_key": intento.stripe_idempotency_key
+    }
+    assert intento.checkout_session_id == "cs_test_synthetic"
     assert "price_testmonthly" not in respuesta.text
 
 
-def test_webhook_pago_inicial_crea_cliente_y_deduplica(
+def test_webhook_pago_historico_sin_intento_no_vincula_cuenta(
     db: Session,
     database_url: URL,
     client: TestClient,
@@ -545,14 +591,12 @@ def test_webhook_pago_inicial_crea_cliente_y_deduplica(
         assert primera.status_code == 200
         assert repetida.status_code == 200
         with fabrica() as db:
-            assert db.scalar(select(func.count()).select_from(Cliente)) == 1
-            assert db.scalar(select(func.count()).select_from(Membresia)) == 1
-            assert db.scalar(select(func.count()).select_from(FacturaMembresia)) == 1
+            assert db.scalar(select(func.count()).select_from(Cliente)) == 0
+            assert db.scalar(select(func.count()).select_from(Membresia)) == 0
+            facturas = list(db.scalars(select(FacturaMembresia)))
+            assert len(facturas) == 1
+            assert facturas[0].membresia_id is None
             assert db.scalar(select(func.count()).select_from(EventoStripe)) == 1
-            cliente = db.scalar(select(Cliente))
-            assert cliente is not None
-            assert cliente.correo_privado == "privado@example.invalid"
-            assert cliente.nombre_completo == "Cliente Prueba Sintetica"
     finally:
         motor.dispose()
 

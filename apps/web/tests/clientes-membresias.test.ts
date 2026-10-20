@@ -44,7 +44,7 @@ test('el admin mantiene SSR, paginación y detalle en un modal accesible', () =>
   assert.match(pagina, /layout: 'admin'/)
   assert.match(pagina, /middleware: 'sesion-owner'/)
   assert.match(pagina, /await useAsyncData<ResultadoCarga>/)
-  assert.match(pagina, /watch: \[paginaSolicitada\]/)
+  assert.match(pagina, /watch: \[paginaSolicitada, filtroEstado\]/)
   assert.match(pagina, /<dialog[\s\S]*aria-labelledby="detail-title"/)
   assert.match(pagina, /showModal\(\)/)
   assert.match(pagina, /Anterior[\s\S]*Siguiente/)
@@ -55,38 +55,46 @@ test('el admin mantiene SSR, paginación y detalle en un modal accesible', () =>
   assert.match(layout, /to="\/admin\/clientes"/)
 })
 
-test('ninguna respuesta o vista de clientes expone correo ni ids de Stripe', () => {
-  const apiSchemas = readFileSync(
-    join(WEB_ROOT, '..', 'api', 'app', 'esquemas', 'clientes_membresias.py'),
-    'utf8',
-  )
+test('las vistas y respuestas BFF de clientes no exponen correo ni ids de Stripe', () => {
+  const respuestaMembresia = leerWeb('server', 'api', 'clientes', 'membresia.get.ts')
   const types = leerWeb('app', 'utils', 'clientes-membresias.ts')
   const adminPage = leerWeb('app', 'pages', 'admin', 'clientes', 'index.vue')
 
-  assert.doesNotMatch(apiSchemas, /correo_privado|stripe_customer_id|stripe_subscription_id|stripe_price_id/)
+  assert.match(respuestaMembresia, /return validarRespuestaMembresia\(respuesta\)/)
+  assert.doesNotMatch(respuestaMembresia, /stripe_customer_id|stripe_subscription_id|stripe_price_id/)
   assert.doesNotMatch(types, /correo|stripe_customer|stripe_subscription|price_id/)
   assert.doesNotMatch(adminPage, /correo|stripe_customer|stripe_subscription|price_id/i)
 })
 
 test('BFF exige origen y schema allowlist para iniciar Checkout', () => {
   const proxy = leerWeb('server', 'utils', 'proxy-membresias.ts')
+  const proxyClientes = leerWeb('server', 'utils', 'proxy-clientes.ts')
   const proxyAdmin = leerWeb('server', 'utils', 'proxy-admin-clientes.ts')
-  const purchasePage = leerWeb('app', 'pages', 'membresias', 'index.vue')
+  const purchasePage = leerWeb('app', 'pages', 'cliente', 'membresias.vue')
 
-  assert.match(proxy, /exigirOrigenMismoSitio/)
-  assert.match(proxy, /Object\.keys\(body\)\.length !== 1/)
+  assert.match(proxy, /exigirOrigen: true/)
+  assert.match(proxy, /incluirSesion: true/)
+  assert.match(proxy, /leerObjetoJsonCliente\(event, \['plan_id'\]\)/)
+  assert.match(proxyClientes, /function exigirOrigenMismoSitio/)
+  assert.match(proxyClientes, /camposRequeridos\.some\(\(clave\) => !Object\.hasOwn\(cuerpo, clave\)\)/)
+  assert.match(proxyClientes, /claves\.some\(\(clave\) => !camposPermitidos\.includes\(clave\)\)/)
   assert.match(proxy, /plan_id !== 'mensual'/)
   assert.match(proxy, /idempotency-key/)
-  assert.doesNotMatch(proxy, /encabezadosSesion/)
+  assert.match(proxyClientes, /const NOMBRE_COOKIE_CLIENTE = 'smart_parking_customer_session'/)
+  assert.match(proxyClientes, /encabezados\.set\('cookie', cookieCliente\)/)
+  assert.doesNotMatch(proxyClientes, /getCookie\(event, useRuntimeConfig\(event\)\.sessionCookieName/)
   assert.match(proxyAdmin, /encabezadosSesion/)
+  assert.match(proxy, /incluirSesion: true,[\s\S]*?exigirOrigen: true/)
   assert.match(purchasePage, /crypto\.randomUUID\(\)/)
   assert.match(purchasePage, /hostname !== 'checkout\.stripe\.com'/)
+  assert.match(proxyAdmin, /FILTROS_ESTADO = new Set\(\['sin_membresia', 'activa', 'cancelada'\]\)/)
+  assert.match(proxyAdmin, /query\.set\('estado', estado\)/)
 })
 
-test('la pantalla de retorno no afirma éxito antes del webhook confirmado', () => {
+test('la pantalla de retorno no concede acceso según query ni confirma una compra', () => {
   const resultPage = leerWeb('app', 'pages', 'membresias', 'resultado.vue')
-  assert.match(resultPage, /consultarEstadoCheckout/)
-  assert.match(resultPage, /estado\.value === 'confirmado'/)
-  assert.match(resultPage, /registro se completa únicamente después/)
+  assert.match(resultPage, /no confirma una membresía/i)
+  assert.match(resultPage, /to="\/cliente\/membresias"/)
+  assert.doesNotMatch(resultPage, /consultarEstadoCheckout|session_id|useRoute\(\)|registrarCliente/i)
   assert.doesNotMatch(resultPage, /crearCheckout|registrarCliente|correo|stripe_customer/i)
 })

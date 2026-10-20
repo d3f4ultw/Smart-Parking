@@ -33,6 +33,7 @@ type CapturedRequest = {
   userId?: string
   authorization?: string
   origin?: string
+  registrationOrigin?: string
   body: string
 }
 
@@ -125,6 +126,7 @@ function captureRequest(request: IncomingMessage, body: string): CapturedRequest
     userId: headerValue(request.headers['x-user-id']),
     authorization: headerValue(request.headers.authorization),
     origin: headerValue(request.headers.origin),
+    registrationOrigin: headerValue(request.headers['x-sp-registration-origin']),
     body,
   }
 }
@@ -2094,6 +2096,137 @@ test('Nitro BFF security boundary preserves upstream contracts', {
       harness.clearRequests()
     })
 
+    await suite.test('customer registration BFF validates origin and filters headers and fields', async () => {
+      const clientPassword = `BFF-${password.toUpperCase()}!9`
+      const cookie = `smart_parking_session=${sessionToken}`
+      const hiddenField = marker()
+      sensitiveMarkers.push(clientPassword, hiddenField)
+      const payload = {
+        nombre: 'María',
+        apellido_paterno: 'López',
+        apellido_materno: null,
+        correo: 'synthetic@example.com',
+        contrasena: clientPassword,
+      }
+
+      harness.clearRequests()
+      const valido = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: {
+            cookie,
+            authorization: `Bearer ${hiddenField}`,
+            'x-user-role': 'OWNER',
+            'x-sp-registration-origin': hiddenField,
+            origin: harness.origin,
+            'content-type': 'application/json; charset=utf-8',
+          },
+          body: JSON.stringify(payload),
+        },
+        jsonPlan(202, { estado: 'solicitud_recibida' }, {
+          'set-cookie': `smart_parking_session=${hiddenField}; HttpOnly`,
+        }),
+      )
+
+      assert.equal(valido.response.status, 202)
+      assert.deepEqual(JSON.parse(valido.body), { estado: 'solicitud_recibida' })
+      assert.equal(valido.response.headers.get('cache-control'), 'no-store')
+      assert.equal(valido.response.headers.get('set-cookie'), null)
+      assertForwarded(valido, 'POST', '/api/clientes/registro')
+      assert.deepEqual(JSON.parse(valido.upstreamRequest?.body ?? ''), payload)
+      assert.equal(valido.upstreamRequest?.cookie, undefined)
+      assert.equal(valido.upstreamRequest?.authorization, undefined)
+      assert.equal(valido.upstreamRequest?.role, undefined)
+      assert.equal(valido.upstreamRequest?.origin, undefined)
+      assert.match(
+        valido.upstreamRequest?.registrationOrigin ?? '',
+        /^[0-9a-f]{64}$/,
+      )
+      assert.notEqual(valido.upstreamRequest?.registrationOrigin, hiddenField)
+      assertNoSensitiveBody(valido.body)
+
+      harness.clearRequests()
+      const origenAusente = await send(
+        '/api/clientes/registro',
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+      )
+      assert.equal(origenAusente.response.status, 403)
+      assert.equal(origenAusente.upstreamRequest, undefined)
+
+      const origenAjeno = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: {
+            origin: 'https://attacker.invalid',
+            'content-type': 'application/json',
+          },
+          body: '{}',
+        },
+      )
+      assert.equal(origenAjeno.response.status, 403)
+      assert.equal(origenAjeno.upstreamRequest, undefined)
+
+      const tipoInvalido = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: { origin: harness.origin, 'content-type': 'text/plain' },
+          body: '{}',
+        },
+      )
+      assert.equal(tipoInvalido.response.status, 415)
+      assert.equal(tipoInvalido.upstreamRequest, undefined)
+
+      const campoExtra = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ ...payload, rol: 'OWNER' }),
+        },
+      )
+      assert.equal(campoExtra.response.status, 422)
+      assert.equal(campoExtra.upstreamRequest, undefined)
+
+      const cuerpoGrande = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+          },
+          body: ' '.repeat(8 * 1024 + 1),
+        },
+      )
+      assert.equal(cuerpoGrande.response.status, 413)
+      assert.equal(cuerpoGrande.upstreamRequest, undefined)
+
+      const errorInterno = await send(
+        '/api/clientes/registro',
+        {
+          method: 'POST',
+          headers: {
+            origin: harness.origin,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        },
+        jsonPlan(500, { detail: hiddenField }),
+      )
+      assert.equal(errorInterno.response.status, 503)
+      assert.equal(errorInterno.response.headers.get('cache-control'), 'no-store')
+      assert.ok(!errorInterno.body.includes(hiddenField))
+      assertNoSensitiveBody(errorInterno.body)
+      assertNoSensitiveBody(harness.logs())
+      harness.clearRequests()
+    })
+
     await suite.test('employee BFF validates requests and forwards only required headers', async () => {
       const session = marker()
       const cookie = `smart_parking_session=${session}`
@@ -2225,5 +2358,129 @@ test('Nitro BFF security boundary preserves upstream contracts', {
     for (const value of sensitiveMarkers) {
       assert.ok(!harness.logs().includes(value), 'Sensitive marker leaked in Nuxt logs')
     }
+  }
+})
+
+test('customer registration BFF filters input and enforces same-origin requests', {
+  timeout: 120_000,
+}, async () => {
+  const harness = await startHarness()
+  const passwordMarker = `Synthetic-${randomUUID()}!9`
+  const internalMarker = `Internal-${randomUUID()}`
+  const cookieMarker = `Cookie-${randomUUID()}`
+  const payload = {
+    nombre: 'María',
+    apellido_paterno: 'López',
+    apellido_materno: null,
+    correo: 'synthetic@example.com',
+    contrasena: passwordMarker,
+  }
+
+  async function send(path: string, options: RequestInit = {}, plan?: UpstreamPlan) {
+    const requestIndex = harness.requests.length
+    if (plan) {
+      harness.queueResponse(plan)
+    }
+    const response = await fetch(`${harness.origin}${path}`, options)
+    const body = await response.text()
+    const upstreamRequest = harness.requests[requestIndex]
+    if (!upstreamRequest && plan) {
+      harness.cancelResponse(plan)
+    }
+    return { response, body, upstreamRequest }
+  }
+
+  try {
+    const accepted = await send(
+      '/api/clientes/registro',
+      {
+        method: 'POST',
+        headers: {
+          origin: harness.origin,
+          'content-type': 'application/json',
+          cookie: `smart_parking_session=${cookieMarker}`,
+          authorization: `Bearer ${internalMarker}`,
+          'x-user-role': 'OWNER',
+          'x-sp-registration-origin': internalMarker,
+        },
+        body: JSON.stringify(payload),
+      },
+      jsonPlan(202, { estado: 'solicitud_recibida' }, {
+        'set-cookie': `smart_parking_session=${cookieMarker}; HttpOnly`,
+      }),
+    )
+    assert.equal(accepted.response.status, 202)
+    assert.deepEqual(JSON.parse(accepted.body), { estado: 'solicitud_recibida' })
+    assert.equal(accepted.response.headers.get('cache-control'), 'no-store')
+    assert.equal(accepted.response.headers.get('set-cookie'), null)
+    assert.equal(accepted.upstreamRequest?.path, '/api/clientes/registro')
+    assert.deepEqual(JSON.parse(accepted.upstreamRequest?.body ?? ''), payload)
+    assert.equal(accepted.upstreamRequest?.cookie, undefined)
+    assert.equal(accepted.upstreamRequest?.authorization, undefined)
+    assert.equal(accepted.upstreamRequest?.role, undefined)
+    assert.equal(accepted.upstreamRequest?.origin, undefined)
+    assert.match(accepted.upstreamRequest?.registrationOrigin ?? '', /^[0-9a-f]{64}$/)
+    assert.notEqual(accepted.upstreamRequest?.registrationOrigin, internalMarker)
+
+    const sinOrigen = await send(
+      '/api/clientes/registro',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+    )
+    assert.equal(sinOrigen.response.status, 403)
+    assert.equal(sinOrigen.upstreamRequest, undefined)
+
+    const origenAjeno = await send(
+      '/api/clientes/registro',
+      {
+        method: 'POST',
+        headers: {
+          origin: 'https://attacker.invalid',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      },
+    )
+    assert.equal(origenAjeno.response.status, 403)
+    assert.equal(origenAjeno.upstreamRequest, undefined)
+
+    const campoPrivilegiado = await send(
+      '/api/clientes/registro',
+      {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...payload, rol: 'OWNER' }),
+      },
+    )
+    assert.equal(campoPrivilegiado.response.status, 422)
+    assert.equal(campoPrivilegiado.upstreamRequest, undefined)
+
+    const cuerpoGrande = await send(
+      '/api/clientes/registro',
+      {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: ' '.repeat(8 * 1024 + 1),
+      },
+    )
+    assert.equal(cuerpoGrande.response.status, 413)
+    assert.equal(cuerpoGrande.upstreamRequest, undefined)
+
+    const errorUpstream = await send(
+      '/api/clientes/registro',
+      {
+        method: 'POST',
+        headers: { origin: harness.origin, 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      jsonPlan(500, { detail: passwordMarker }),
+    )
+    assert.equal(errorUpstream.response.status, 503)
+    assert.equal(errorUpstream.response.headers.get('cache-control'), 'no-store')
+    assert.ok(!errorUpstream.body.includes(passwordMarker))
+    assert.ok(!errorUpstream.body.includes(internalMarker))
+    assert.ok(!harness.logs().includes(passwordMarker))
+    assert.ok(!harness.logs().includes(internalMarker))
+  } finally {
+    await harness.close()
   }
 })

@@ -35,6 +35,8 @@ type TipoEvento =
   | 'operador.actualizado'
   | 'operador.creado'
   | 'cajon.actualizado'
+  | 'cliente.registrado'
+  | 'membresia.actualizada'
   | 'resync'
 
 type EventoTiempoReal = {
@@ -49,6 +51,8 @@ export type ManejadoresEventosTiempoReal = {
   alCrearOperador: (id: number, cursorEvento: string) => void
   alResync: () => void | Promise<void>
   alActualizarCajon?: (datos: InstantaneaEventoCajon) => void
+  alActualizarDirectorioClientes?: () => void
+  alActualizarMembresias?: () => void
 }
 
 type SuscripcionEventosTiempoReal = {
@@ -90,6 +94,8 @@ const EVENTOS_PERMITIDOS = new Set<TipoEvento>([
   'operador.actualizado',
   'operador.creado',
   'cajon.actualizado',
+  'cliente.registrado',
+  'membresia.actualizada',
   'resync',
 ])
 
@@ -245,7 +251,18 @@ function analizarEvento(tipo: string, evento: Event): EventoTiempoReal | null {
         datosCajon,
       }
     }
-    if (recurso.recurso_tipo !== 'operador') {
+    if (tipo === 'cliente.registrado' || tipo === 'membresia.actualizada') {
+      if (
+        recurso.recurso_tipo !== 'cliente'
+        || recursoId !== 1
+        || recurso.datos !== undefined
+        || !esFechaConZona(recurso.ocurrido_en)
+        || Object.keys(recurso).length !== 3
+      ) {
+        return null
+      }
+      return { id: cursor, tipo, recursoId }
+    }    if (recurso.recurso_tipo !== 'operador') {
       return null
     }
     return { id: cursor, tipo: tipo as TipoEvento, recursoId }
@@ -304,6 +321,10 @@ export function crearControladorEventosTiempoReal(
       if (evento.datosCajon !== undefined) {
         suscriptor.manejadores.alActualizarCajon?.(evento.datosCajon)
       }
+    } else if (evento.tipo === 'cliente.registrado') {
+      suscriptor.manejadores.alActualizarDirectorioClientes?.()
+    } else if (evento.tipo === 'membresia.actualizada') {
+      suscriptor.manejadores.alActualizarMembresias?.()
     } else if (evento.recursoId !== null && evento.tipo === 'operador.creado') {
       suscriptor.manejadores.alCrearOperador(evento.recursoId, evento.id)
     } else if (evento.recursoId !== null) {

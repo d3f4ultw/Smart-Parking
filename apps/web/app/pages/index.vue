@@ -1,7 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-
-const mostrarAvisoRegistro = ref(false)
+import { RouterLink } from 'vue-router'
 
 useHead({
   title: 'Smart Parking',
@@ -24,21 +22,16 @@ useHead({
       </p>
 
       <nav class="landing__actions" aria-label="Acceso a Smart Parking">
-        <NuxtLink class="landing__action landing__action--primary" to="/login">
+        <RouterLink class="landing__action landing__action--primary" to="/cliente/login">
           Iniciar sesión
-        </NuxtLink>
-        <button
+        </RouterLink>
+        <RouterLink
           class="landing__action landing__action--secondary"
-          type="button"
-          @click="mostrarAvisoRegistro = true"
+          to="/cliente/registro"
         >
           Registrarse
-        </button>
+        </RouterLink>
       </nav>
-
-      <p v-if="mostrarAvisoRegistro" class="landing__notice" role="status">
-        Registro próximamente
-      </p>
     </div>
   </main>
 </template>
@@ -147,12 +140,6 @@ useHead({
 .landing__action--secondary:hover {
   border-color: var(--landing-accent);
   color: var(--landing-accent);
-}
-
-.landing__notice {
-  margin: 0.875rem 0 0;
-  color: var(--landing-muted);
-  font-size: 0.875rem;
 }
 
 @media (max-width: 32rem) {

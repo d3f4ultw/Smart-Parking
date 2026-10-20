@@ -6,13 +6,16 @@ from app.core.database import Base, engine
 from app.models import (  # noqa: F401
     ActivacionCuenta,
     Cliente,
+    CuentaCliente,
     CuentaPropietario,
     Empleado,
     EventoStripe,
     FacturaMembresia,
     InscripcionPropietario,
+    IntentoCheckoutCliente,
     Membresia,
     Sesion,
+    SesionCliente,
     SesionGestionPropietario,
     Usuario,
 )

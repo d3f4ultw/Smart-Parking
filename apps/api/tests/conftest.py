@@ -16,10 +16,12 @@ from app.api.rutas.vision_owner import limitador_autorizacion_vision
 from app.core.config import Settings
 from app.models import (
     ActivacionCuenta,
+    AsociacionTarjetaRFID,
     Cajon,
     Cliente,
     ConexionSSEUsuario,
     ConfiguracionEstacionamiento,
+    CuentaCliente,
     CuentaPropietario,
     DesvinculacionPropietario,
     Empleado,
@@ -29,9 +31,12 @@ from app.models import (
     FacturaMembresia,
     HistorialModalidadEstacionamiento,
     InscripcionPropietario,
+    IntentoCheckoutCliente,
     Membresia,
     Sesion,
+    SesionCliente,
     SesionGestionPropietario,
+    TarjetaRFID,
     TurnoEmpleado,
     Usuario,
     VisionCalibrationLease,
@@ -42,8 +47,10 @@ from app.seguridad.limitador import (
     limitador_activaciones,
     limitador_autenticacion,
     limitador_confirmacion_desvinculacion,
+    limitador_registro_clientes,
     limitador_solicitud_desvinculacion,
 )
+from app.seguridad.limitador_clientes import limitador_autenticacion_clientes
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -56,12 +63,16 @@ def estado_rate_limit_aislado() -> Generator[None]:
     limitador_autenticacion.reiniciar()
     limitador_confirmacion_desvinculacion.reiniciar()
     limitador_solicitud_desvinculacion.reiniciar()
+    limitador_registro_clientes.reiniciar()
+    limitador_autenticacion_clientes.reiniciar()
     limitador_autorizacion_vision.reiniciar()
     yield
     limitador_activaciones.reiniciar()
     limitador_autenticacion.reiniciar()
     limitador_confirmacion_desvinculacion.reiniciar()
     limitador_solicitud_desvinculacion.reiniciar()
+    limitador_registro_clientes.reiniciar()
+    limitador_autenticacion_clientes.reiniciar()
     limitador_autorizacion_vision.reiniciar()
 
 
@@ -181,11 +192,16 @@ def db(database_url: URL) -> Generator[Session]:
     finally:
         session.rollback()
         session.execute(delete(Sesion))
+        session.execute(delete(SesionCliente))
+        session.execute(delete(IntentoCheckoutCliente))
         session.execute(delete(SesionGestionPropietario))
         session.execute(delete(DesvinculacionPropietario))
         session.execute(delete(FacturaMembresia))
         session.execute(delete(Membresia))
+        session.execute(delete(AsociacionTarjetaRFID))
+        session.execute(delete(TarjetaRFID))
         session.execute(delete(Cliente))
+        session.execute(delete(CuentaCliente))
         session.execute(delete(EventoStripe))
         session.execute(delete(ActivacionCuenta))
         session.execute(delete(InscripcionPropietario))

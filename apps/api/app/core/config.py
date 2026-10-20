@@ -82,6 +82,20 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias="SESSION_DURATION_MINUTES",
     )
+    customer_session_cookie_name: str = Field(
+        default="smart_parking_customer_session",
+        min_length=1,
+        validation_alias="CUSTOMER_SESSION_COOKIE_NAME",
+    )
+    customer_session_duration_minutes: int = Field(
+        default=480,
+        ge=1,
+        validation_alias="CUSTOMER_SESSION_DURATION_MINUTES",
+    )
+    customer_session_cookie_secure_override: bool | None = Field(
+        default=None,
+        validation_alias="CUSTOMER_SESSION_COOKIE_SECURE",
+    )
     activacion_reenvio_cooldown_segundos: int = Field(
         default=60,
         ge=1,
@@ -201,6 +215,14 @@ class Settings(BaseSettings):
 
         if self.session_cookie_secure_override is not None:
             return self.session_cookie_secure_override
+        return self.app_environment == "production"
+
+    @property
+    def customer_session_cookie_secure(self) -> bool:
+        """Mantiene el atributo Secure separado para la cookie de clientes."""
+
+        if self.customer_session_cookie_secure_override is not None:
+            return self.customer_session_cookie_secure_override
         return self.app_environment == "production"
 
 
