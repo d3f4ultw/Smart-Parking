@@ -6,12 +6,16 @@ import {
   proveerEventosTiempoReal,
 } from '~/utils/eventos-tiempo-real'
 import { construirCapacidadesEmpleados } from '~/utils/empleados'
+import { puedeLeerClientesMembresias } from '~/utils/clientes-membresias'
 import { mapearErrorLogout } from '~/utils/logout'
 
 const route = useRoute()
 const { usuario, limpiarSesion } = useSesion()
 const capacidadesEmpleados = computed(() =>
   construirCapacidadesEmpleados(usuario.value?.rol),
+)
+const puedeConsultarClientes = computed(() =>
+  puedeLeerClientesMembresias(usuario.value?.rol),
 )
 const { cerrarSesion } = useLogout()
 const eventosTiempoReal = crearControladorEventosTiempoReal({
@@ -62,7 +66,7 @@ const etiquetaRol = computed(() => usuario.value?.rol === 'OWNER' ? 'Dueño' : '
 const inicialAdmin = computed(() => nombreAdmin.value.charAt(0).toUpperCase())
 
 function esRutaActiva(
-  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'empleados' | 'configuracion' | 'vision',
+  ruta: 'inicio' | 'estacionamiento' | 'operadores' | 'empleados' | 'clientes' | 'configuracion' | 'vision',
 ) {
   if (ruta === 'inicio') {
     return route.path === '/admin'
@@ -82,6 +86,10 @@ function esRutaActiva(
 
   if (ruta === 'empleados') {
     return route.path.startsWith('/admin/empleados')
+  }
+
+  if (ruta === 'clientes') {
+    return route.path.startsWith('/admin/clientes')
   }
 
   return route.path.startsWith('/admin/operadores')
@@ -211,7 +219,7 @@ onBeforeUnmount(() => {
       </div>
 
       <nav class="primary-navigation" aria-label="Principal">
-        <p class="navigation-label">GESTIÓN</p>
+        <p class="navigation-label">INICIO</p>
         <NuxtLink
           class="navigation-item"
           :class="{ 'is-active': esRutaActiva('inicio') }"
@@ -224,6 +232,7 @@ onBeforeUnmount(() => {
           </svg>
           <span>Dashboard</span>
         </NuxtLink>
+        <p class="navigation-label">OPERACIÓN</p>
         <NuxtLink
           class="navigation-item"
           :class="{ 'is-active': esRutaActiva('estacionamiento') }"
@@ -236,6 +245,19 @@ onBeforeUnmount(() => {
           </svg>
           <span>Estacionamiento</span>
         </NuxtLink>
+        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" />
+          </svg>
+          <span>Registros</span>
+          <small>Próximamente</small>
+        </button>
+        <p
+          v-if="usuario?.rol === 'OWNER' || capacidadesEmpleados.leer || puedeConsultarClientes"
+          class="navigation-label"
+        >
+          GESTIÓN
+        </p>
         <NuxtLink
           v-if="usuario?.rol === 'OWNER'"
           class="navigation-item"
@@ -264,13 +286,20 @@ onBeforeUnmount(() => {
           </svg>
           <span>Empleados</span>
         </NuxtLink>
-        <button class="navigation-item navigation-disabled" type="button" disabled aria-disabled="true">
+        <NuxtLink
+          v-if="puedeConsultarClientes"
+          class="navigation-item"
+          :class="{ 'is-active': esRutaActiva('clientes') }"
+          to="/admin/clientes"
+          :aria-current="esRutaActiva('clientes') ? 'page' : undefined"
+          @click="cerrarMenuMovil"
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" />
+            <circle cx="9" cy="8" r="3.3" />
+            <path d="M2.5 20v-1.2A4.8 4.8 0 0 1 7.3 14h3.4a4.8 4.8 0 0 1 4.8 4.8V20M16 6.2a3.2 3.2 0 0 1 0 6.1M17 14h.3a4.2 4.2 0 0 1 4.2 4.2V20" />
           </svg>
-          <span>Registros</span>
-          <small>Próximamente</small>
-        </button>
+          <span>Clientes y membresías</span>
+        </NuxtLink>
         <template v-if="usuario?.rol === 'OWNER'">
           <p class="navigation-label vision-label">VISION IA</p>
           <NuxtLink

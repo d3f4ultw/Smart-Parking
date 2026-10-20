@@ -5,9 +5,13 @@ from app.core.config import get_settings
 from app.core.database import Base, engine
 from app.models import (  # noqa: F401
     ActivacionCuenta,
+    Cliente,
     CuentaPropietario,
     Empleado,
+    EventoStripe,
+    FacturaMembresia,
     InscripcionPropietario,
+    Membresia,
     Sesion,
     SesionGestionPropietario,
     Usuario,

@@ -9,6 +9,7 @@ from starlette.responses import Response
 from app.api.rutas import (
     RUTA_ACTIVACION_OPERADOR,
     RUTA_ACTIVACION_PROPIETARIO,
+    RUTA_ADMIN_CLIENTES,
     RUTA_ADMIN_EMPLEADOS,
     RUTA_CONFIGURACION_ACCESO,
     RUTA_CONFIGURACION_MODALIDAD,
@@ -17,17 +18,22 @@ from app.api.rutas import (
     RUTA_LOGIN,
     RUTA_LOGOUT,
     RUTA_ME,
+    RUTA_MEMBRESIAS,
+    RUTA_STRIPE_WEBHOOK,
     activaciones_operador_router,
     activaciones_propietario_router,
     autenticacion_router,
     cajones_router,
+    clientes_router,
     configuracion_acceso_router,
     configuracion_estacionamiento_router,
     empleados_router,
     eventos_tiempo_real_router,
     gestion_propietario_router,
     horarios_empleados_router,
+    membresias_router,
     operadores_router,
+    stripe_webhook_router,
     vision_frames_router,
     vision_owner_router,
     vision_router,
@@ -38,9 +44,13 @@ from app.core.database import engine
 from app.correo.smtp import cargar_configuracion_smtp
 from app.models import (  # noqa: F401
     ActivacionCuenta,
+    Cliente,
     CuentaPropietario,
     Empleado,
+    EventoStripe,
+    FacturaMembresia,
     InscripcionPropietario,
+    Membresia,
     Sesion,
     SesionGestionPropietario,
     TurnoEmpleado,
@@ -73,6 +83,9 @@ app.include_router(configuracion_estacionamiento_router)
 app.include_router(configuracion_acceso_router)
 app.include_router(horarios_empleados_router)
 app.include_router(empleados_router)
+app.include_router(clientes_router)
+app.include_router(membresias_router)
+app.include_router(stripe_webhook_router)
 app.include_router(eventos_tiempo_real_router)
 app.include_router(cajones_router)
 app.include_router(vision_router)
@@ -108,6 +121,9 @@ RUTAS_SIN_CACHE = (
         RUTA_CONFIGURACION_ACCESO,
         RUTA_HORARIOS_EMPLEADOS,
         RUTA_ADMIN_EMPLEADOS,
+        RUTA_ADMIN_CLIENTES,
+        RUTA_MEMBRESIAS,
+        RUTA_STRIPE_WEBHOOK,
     }
 )
 
@@ -123,6 +139,7 @@ async def evitar_cache_en_autenticacion(
     if (
         request.url.path in RUTAS_SIN_CACHE
         or request.url.path.startswith(f"{RUTA_ADMIN_EMPLEADOS}/")
+        or request.url.path.startswith(f"{RUTA_ADMIN_CLIENTES}/")
         or request.url.path.startswith("/api/gestion-propietario/v1/")
     ):
         response.headers["Cache-Control"] = "no-store"

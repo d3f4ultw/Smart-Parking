@@ -1,3 +1,4 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -64,6 +65,10 @@ class Settings(BaseSettings):
         default="development",
         validation_alias="APP_ENVIRONMENT",
     )
+    session_cookie_secure_override: bool | None = Field(
+        default=None,
+        validation_alias="SESSION_COOKIE_SECURE",
+    )
     correo_transporte: Literal["smtp"] = Field(
         default="smtp",
         validation_alias="CORREO_TRANSPORTE",
@@ -98,6 +103,18 @@ class Settings(BaseSettings):
         min_length=1,
         validation_alias="PARKING_TIMEZONE",
     )
+    stripe_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="STRIPE_API_KEY",
+    )
+    stripe_webhook_secret: SecretStr | None = Field(
+        default=None,
+        validation_alias="STRIPE_WEBHOOK_SECRET",
+    )
+    stripe_membership_price_ids: str = Field(
+        default="",
+        validation_alias="STRIPE_MEMBERSHIP_PRICE_IDS",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="",
@@ -118,6 +135,46 @@ class Settings(BaseSettings):
                 "PARKING_TIMEZONE debe ser una zona IANA válida."
             ) from error
         return valor
+
+    @field_validator("stripe_api_key")
+    @classmethod
+    def validar_clave_stripe_sandbox(cls, valor: SecretStr | None) -> SecretStr | None:
+        """Impide que una clave Live llegue a los clientes de esta aplicación."""
+
+        if valor is not None and not valor.get_secret_value().startswith("sk_test_"):
+            raise ValueError("STRIPE_API_KEY debe pertenecer a Stripe Sandbox.")
+        return valor
+
+    @field_validator("stripe_webhook_secret")
+    @classmethod
+    def validar_secreto_webhook(cls, valor: SecretStr | None) -> SecretStr | None:
+        """Valida la forma del secreto firmado sin revelar su contenido."""
+
+        if valor is not None and not valor.get_secret_value().startswith("whsec_"):
+            raise ValueError("STRIPE_WEBHOOK_SECRET no tiene un formato válido.")
+        return valor
+
+    @field_validator("stripe_membership_price_ids")
+    @classmethod
+    def validar_price_ids(cls, valor: str) -> str:
+        """Limita los planes configurados a tres Price IDs de Stripe."""
+
+        ids = [item.strip() for item in valor.split(",") if item.strip()]
+        if len(ids) > 3 or len(ids) != len(set(ids)):
+            raise ValueError(
+                "STRIPE_MEMBERSHIP_PRICE_IDS admite hasta tres IDs únicos."
+            )
+        if any(re.fullmatch(r"price_[A-Za-z0-9]+", item) is None for item in ids):
+            raise ValueError("STRIPE_MEMBERSHIP_PRICE_IDS contiene un ID inválido.")
+        return ",".join(ids)
+
+    @property
+    def stripe_price_ids(self) -> tuple[str, ...]:
+        """Lista inmutable de Price IDs autorizados solo en el servidor."""
+
+        if not self.stripe_membership_price_ids:
+            return ()
+        return tuple(self.stripe_membership_price_ids.split(","))
 
     @property
     def zona_horaria_estacionamiento(self) -> ZoneInfo:
@@ -142,6 +199,8 @@ class Settings(BaseSettings):
     def session_cookie_secure(self) -> bool:
         """Activa Secure unicamente cuando la aplicacion corre en produccion."""
 
+        if self.session_cookie_secure_override is not None:
+            return self.session_cookie_secure_override
         return self.app_environment == "production"
 
 

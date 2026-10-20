@@ -22,6 +22,12 @@
 # Local-only execution and audit history
 /reports/
 
+# Local Cloudflare tunnel controls
+/infra/compose.tunnel.local.yml
+/infra/local/cloudflare/parking-tunnel-*.bat
+/infra/local/cloudflare/parking-tunnel-*.sh
+/infra/local/cloudflare/parking-tunnel-*.ps1
+
 # Local Vision runtime assets and generated evidence
 /apps/vision/models/
 /apps/vision/zones.json

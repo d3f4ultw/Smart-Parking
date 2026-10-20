@@ -5,6 +5,12 @@ from app.models.cajon import (
     EstadoFisicoCajon,
     EstadoOperativoCajon,
 )
+from app.models.clientes_membresias import (
+    Cliente,
+    EventoStripe,
+    FacturaMembresia,
+    Membresia,
+)
 from app.models.configuracion_estacionamiento import (
     ConfiguracionEstacionamiento,
     HistorialModalidadEstacionamiento,
@@ -33,6 +39,7 @@ from app.models.vision_configuration import VisionConfiguration, VisionRequest
 __all__ = [
     "ActivacionCuenta",
     "Cajon",
+    "Cliente",
     "CODIGOS_TURNOS_EMPLEADOS",
     "CodigoTurnoEmpleado",
     "ConexionSSEUsuario",
@@ -40,14 +47,17 @@ __all__ = [
     "CuentaPropietario",
     "DesvinculacionPropietario",
     "Empleado",
+    "EventoStripe",
     "EstadoEventosTiempoReal",
     "EstadoEfectivoCajon",
     "EstadoFisicoCajon",
     "EstadoOperativoCajon",
+    "FacturaMembresia",
     "EventoTiempoReal",
     "HistorialModalidadEstacionamiento",
     "NOMBRES_TURNOS_EMPLEADOS",
     "InscripcionPropietario",
+    "Membresia",
     "RolUsuario",
     "Sesion",
     "SesionGestionPropietario",

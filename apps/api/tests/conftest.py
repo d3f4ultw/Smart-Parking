@@ -17,15 +17,19 @@ from app.core.config import Settings
 from app.models import (
     ActivacionCuenta,
     Cajon,
+    Cliente,
     ConexionSSEUsuario,
     ConfiguracionEstacionamiento,
     CuentaPropietario,
     DesvinculacionPropietario,
     Empleado,
     EstadoEventosTiempoReal,
+    EventoStripe,
     EventoTiempoReal,
+    FacturaMembresia,
     HistorialModalidadEstacionamiento,
     InscripcionPropietario,
+    Membresia,
     Sesion,
     SesionGestionPropietario,
     TurnoEmpleado,
@@ -179,6 +183,10 @@ def db(database_url: URL) -> Generator[Session]:
         session.execute(delete(Sesion))
         session.execute(delete(SesionGestionPropietario))
         session.execute(delete(DesvinculacionPropietario))
+        session.execute(delete(FacturaMembresia))
+        session.execute(delete(Membresia))
+        session.execute(delete(Cliente))
+        session.execute(delete(EventoStripe))
         session.execute(delete(ActivacionCuenta))
         session.execute(delete(InscripcionPropietario))
         session.execute(delete(CuentaPropietario))

@@ -19,6 +19,25 @@ export default defineNuxtConfig({
         'X-Robots-Tag': 'noindex, nofollow, noarchive',
       },
     },
+    '/admin/clientes': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
+    '/membresias': {
+      prerender: false,
+      headers: { 'Cache-Control': 'no-store' },
+    },
+    '/membresias/resultado': {
+      prerender: false,
+      headers: {
+        'Cache-Control': 'no-store',
+        'Referrer-Policy': 'no-referrer',
+        'X-Robots-Tag': 'noindex, nofollow, noarchive',
+      },
+    },
     '/activar-cuenta': {
       prerender: false,
       headers: {
@@ -45,6 +64,7 @@ export default defineNuxtConfig({
   },
   vite: {
     server: {
+      allowedHosts: ['parking.atelierfolio.dev'],
       watch: {
         usePolling: true,
         interval: 100,
