@@ -1,0 +1,119 @@
+# Secretos y configuración local: conservar solo las plantillas de ejemplo.
+**/.env
+**/.env.*
+**/*.env
+**/*.env.*
+!**/.env.example
+
+# Índice y datos locales de CodeGraph.
+/.codegraph/
+
+# Instrucciones y skills de Codex locales a esta copia.
+/.agents/
+
+# Datos locales, artefactos de trabajo y evidencia archivada que se conservan
+# en esta máquina, pero no forman parte del repositorio compartido.
+/.aws/
+/candidatas/
+/evidencia/
+/var/
+
+# Archivos locales de IntelliJ; conservar el modelo compartido del proyecto.
+/.idea/shelf/
+/.idea/workspace.xml
+/.idea/httpRequests/
+/.idea/queries/
+/.idea/dataSources/
+/.idea/dataSources.local.xml
+
+# Resultados generados por Maven, Gradle, Java e IntelliJ.
+**/target/
+**/build/
+**/out/
+**/.gradle/
+*.class
+
+# Dependencias y compilaciones locales de Web.
+**/node_modules/
+**/.nuxt/
+**/.output/
+**/dist/
+**/coverage/
+
+# Entornos y cachés locales de Python.
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.tox/
+**/.nox/
+*.py[cod]
+
+# Informes generados por pruebas y cobertura.
+**/playwright-report/
+**/test-results/
+**/playwright-artifacts/
+**/htmlcov/
+**/.coverage
+**/.coverage.*
+
+# Bases locales, volcados y respaldos de datos.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.dump
+*.backup
+*.bak
+/infra/podman/backups/
+/infra/podman/.phase3-backups/
+/infra/podman/.phase*/
+/infra/podman/.stripe-cleanup-*/
+/infra/podman/.v*-*/
+/infra/podman/private-backups/
+/infra/rfid1-bridge/private/
+
+# Recuperaciones, copias originales y candidatas históricas locales.
+/firmware/esp32/recovery/
+/firmware/esp32/source-original/
+/infra/vision/recovery/
+/infra/vision/compose-vision-recuperacion.yaml
+/infra/rfid1-bridge/candidatos/
+/infra/rfid1-bridge/recuperacion-*/
+
+# Claves y almacenes privados.
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Registros, PID y archivos temporales del sistema/editor.
+*.log
+*.pid
+.DS_Store
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+*.orig
+*.rej
+
+# Documentación de planificación privada del propietario: mantener local.
+AGENTS.md
+DECISIONS.md
+/docs/
+/reports/
+/infra/podman/testing/**/README.md
+/infra/podman/testing/**/QA-*.md
+/infra/podman/testing/**/RESULTADO-*.md
+/infra/podman/testing/**/flyway-preflight.txt
+/infra/podman/testing/**/private/
+
+# Respaldos privados de flash del ESP32.
+firmware/esp32/.backups/

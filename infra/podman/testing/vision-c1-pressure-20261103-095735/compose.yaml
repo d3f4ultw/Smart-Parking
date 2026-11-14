@@ -1,0 +1,285 @@
+name: ${QA_PROJECT_NAME:?Usa únicamente el proyecto QA con nombre único}
+
+services:
+  db:
+    image: docker.io/library/postgres:18.6-bookworm
+    command: ["postgres", "-p", "5432", "-c", "track_commit_timestamp=on"]
+    environment:
+      POSTGRES_DB: ${QA_POSTGRES_DB:?Falta la base desechable QA}
+      POSTGRES_USER: ${QA_POSTGRES_USER:?Falta el usuario desechable QA}
+      POSTGRES_PASSWORD: ${QA_POSTGRES_PASSWORD:?Falta la clave desechable QA}
+      PGPORT: "5432"
+    volumes:
+      - datos_qa:/var/lib/postgresql
+    networks:
+      - red_interna
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    mem_limit: 384m
+
+  mailpit:
+    image: docker.io/axllent/mailpit:v1.32.0
+    networks:
+      - red_interna
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 128m
+
+  api:
+    image: ${QA_API_IMAGE:?Falta la etiqueta exclusiva de imagen API QA}
+    environment:
+      POSTGRES_DB: ${QA_POSTGRES_DB:?}
+      POSTGRES_USER: ${QA_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${QA_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-vision-c1-qa
+      SESSION_TIMEOUT: ${QA_SESSION_TIMEOUT:-1m}
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_PROTOCOL: smtp
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      SMTP_AUTH: "false"
+      SMTP_STARTTLS_ENABLE: "false"
+      SMTP_CONNECTION_TIMEOUT: "1500"
+      SMTP_READ_TIMEOUT: "1500"
+      SMTP_WRITE_TIMEOUT: "1500"
+      SMTP_FROM: vision-qa@smartparking.example.test
+      SMTP_TEST_CONNECTION: "false"
+      SMARTPARKING_VISION_TOKEN_SHA256: ${QA_VISION_TOKEN_SHA256:?Falta el hash privado del token Vision}
+      SMARTPARKING_VISION_FUENTE_ID: ${QA_VISION_SOURCE_ID:?Falta el UUID sintético de la fuente Vision}
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx512m"
+    networks:
+      - red_interna
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 768m
+    pids_limit: 256
+
+  web:
+    image: ${QA_WEB_IMAGE:?Falta la etiqueta exclusiva de imagen Web QA}
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      NUXT_API_INTERNAL_BASE: http://vision-counter:8081
+      NODE_OPTIONS: --max-old-space-size=384
+    networks:
+      - red_interna
+    depends_on:
+      api:
+        condition: service_started
+      vision-counter:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 512m
+    pids_limit: 128
+
+  browser:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: [browser]
+    working_dir: /workspace
+    entrypoint: ["/bin/bash", "-lc"]
+    command: ["exec bash /qa/run-browser.sh"]
+    environment:
+      QA_PROJECT_NAME: ${QA_PROJECT_NAME:?}
+      BASE_URL: http://web:3000
+      TEST_WEB_BASE_URL: http://web:3000
+      TEST_API_BASE_URL: http://api:8080
+      TEST_VISION_COUNTER_URL: http://vision-counter:8081/__conteo
+      QA_VISION_SOURCE_ID: ${QA_VISION_SOURCE_ID:?}
+      QA_VISION_FIXTURE_URL: http://vision-fixture:8082
+      TEST_OWNER_EMAIL: ${QA_OWNER_EMAIL:?Falta la cuenta DUENO sintética}
+      TEST_OWNER_PASSWORD: ${QA_OWNER_PASSWORD:?Falta la clave DUENO sintética}
+      VISION_TEST_DISPOSABLE: "true"
+      VISION_FIXTURE_DIR: /fixtures
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    volumes:
+      - type: bind
+        source: ./web-source/tests/browser
+        target: /test-source
+        read_only: true
+      - type: bind
+        source: ./run-browser.sh
+        target: /qa/run-browser.sh
+        read_only: true
+      - type: bind
+        source: ./vision-fixture.mjs
+        target: /qa/vision-fixture.mjs
+        read_only: true
+      - type: bind
+        source: ./results
+        target: /results
+      - fixtures:/fixtures
+      - browser_workspace:/workspace
+      - browser_pnpm_store:/pnpm/store
+    networks:
+      - red_interna
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 1536m
+    pids_limit: 512
+    init: true
+
+  vision-counter:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    entrypoint: ["node", "/qa/vision-counter.mjs"]
+    environment:
+      QA_API_UPSTREAM: http://api:8080
+      QA_COUNTER_PORT: "8081"
+    volumes:
+      - type: bind
+        source: ./vision-counter.mjs
+        target: /qa/vision-counter.mjs
+        read_only: true
+      - type: bind
+        source: ./wait-ready.mjs
+        target: /qa/wait-ready.mjs
+        read_only: true
+    networks:
+      - red_interna
+    depends_on:
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 256m
+    pids_limit: 128
+
+  vision-fixture:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: [browser]
+    entrypoint: ["node", "/qa/vision-fixture.mjs"]
+    environment:
+      QA_API_BASE_URL: http://api:8080
+      QA_FIXTURE_PORT: "8082"
+      QA_FIXTURE_DIR: /fixtures
+      QA_VISION_SOURCE_ID: ${QA_VISION_SOURCE_ID:?}
+      QA_VISION_TOKEN: ${QA_VISION_TOKEN:?}
+    volumes:
+      - type: bind
+        source: ./vision-fixture.mjs
+        target: /qa/vision-fixture.mjs
+        read_only: true
+      - fixtures:/fixtures
+    networks:
+      - red_interna
+    depends_on:
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 256m
+    pids_limit: 128
+
+  vision-fixture-db:
+    image: docker.io/library/postgres:18.6-bookworm
+    profiles: [browser]
+    entrypoint: ["/bin/bash", "-lc"]
+    command: ["exec bash /qa/vision-fixture-db.sh"]
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${QA_POSTGRES_DB:?}
+      PGUSER: ${QA_POSTGRES_USER:?}
+      PGPASSWORD: ${QA_POSTGRES_PASSWORD:?}
+      PGSSLMODE: disable
+    volumes:
+      - type: bind
+        source: ./vision-fixture-db.sh
+        target: /qa/vision-fixture-db.sh
+        read_only: true
+      - fixtures:/fixtures
+    networks:
+      - red_interna
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 256m
+    pids_limit: 128
+
+  bootstrap:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: [browser]
+    working_dir: /workspace
+    entrypoint: ["node", "/workspace/bootstrap-owner.mjs"]
+    environment:
+      QA_API_BASE_URL: http://api:8080
+      QA_OWNER_EMAIL: ${QA_OWNER_EMAIL:?Falta el correo sintético DUENO}
+      QA_OWNER_PASSWORD: ${QA_OWNER_PASSWORD:?Falta la clave sintética DUENO}
+      QA_ADMIN_PASSWORD: ${QA_ADMIN_PASSWORD:?Falta la clave administrativa sintética}
+    volumes:
+      - browser_workspace:/workspace
+      - type: bind
+        source: ./bootstrap-owner.mjs
+        target: /workspace/bootstrap-owner.mjs
+        read_only: true
+    networks:
+      - red_interna
+    depends_on:
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+    mem_limit: 512m
+    pids_limit: 256
+
+volumes:
+  datos_qa:
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+  fixtures:
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+  browser_workspace:
+    name: ${QA_PROJECT_NAME:?}_browser_workspace
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+  browser_pnpm_store:
+    name: ${QA_PROJECT_NAME:?}_browser_pnpm_store
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion
+
+networks:
+  red_interna:
+    name: ${QA_PROJECT_NAME:?}_red_interna
+    driver: bridge
+    internal: true
+    labels:
+      com.smartparking.testing.run: ${QA_PROJECT_NAME:?}
+      com.smartparking.testing.owner: luna-integracion

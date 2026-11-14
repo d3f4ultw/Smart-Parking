@@ -1,0 +1,10 @@
+services:
+  web:
+    image: localhost/smartparking-vision-c1-qa-web:20261103-c1fixed
+
+  browser:
+    volumes:
+      - type: bind
+        source: ./web-source-candidate/tests/browser
+        target: /test-source
+        read_only: true

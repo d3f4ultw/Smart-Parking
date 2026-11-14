@@ -1,0 +1,5 @@
+services:
+  api:
+    ports: !reset []
+    networks: !override
+      - pruebas

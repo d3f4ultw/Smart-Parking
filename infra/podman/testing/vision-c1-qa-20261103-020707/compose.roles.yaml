@@ -1,0 +1,4 @@
+services:
+  browser:
+    env_file:
+      - /mnt/new-volume/SmartParking/infra/podman/testing/vision-c1-security-20261103-082704/private/role-test.env

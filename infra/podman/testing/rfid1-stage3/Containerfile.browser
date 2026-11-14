@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
+
+WORKDIR /workspace
+
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN corepack enable \
+    && corepack prepare pnpm@10.34.8 --activate
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --store-dir=/pnpm/store
+
+COPY . ./
+
+CMD ["pnpm", "exec", "playwright", "test", "--config=playwright.config.ts", "rfid1-asociacion.spec.ts"]

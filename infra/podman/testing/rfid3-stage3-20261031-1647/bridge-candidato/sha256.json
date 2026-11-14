@@ -1,0 +1,12 @@
+{
+  "bridge.py": "39532f1259003e869208e41025d9215d42562b4d922c02ac5a86f0e4417e4c35",
+  "bucle_serial.py": "15d0f3a02c775d9ab29741a132e7838b3773fe79cee7b2d564b124e99ffff1de",
+  "cliente_capturas.py": "6a059fef61c817f9b25b4f976a59e4308e52d569a1a5af27093edf7f4a2fa663",
+  "cliente_smartparking.py": "43b28a0e10ec76815f379592accef8d876907ba7e4592b4de1012ad7e19e0e03",
+  "consulta_captura.py": "e3755ce936843b5796546d4d7d0047c79a68e84fc197ceb271f393a6f88847bf",
+  "entrada_rfid2.py": "0366ff6fbd67b65e5c7e6ee6ef7d1b713d81dbf3ab3077ef1d475d0f60f44498",
+  "estado_dispositivo.py": "7aab43c494ac6a266e7e51cb770f856b236febad762b9c92d9b1b14f495950cc",
+  "puerto_serie.py": "e10717e3b254881787cce2f52be8dad514259f24b7cfeba4299d8a25b494abf8",
+  "salida_rfid3.py": "82cbb596d11004f29b360508b60d97d5ae35da1a639f95c87371dfd9df7af432",
+  "tramas_rfid1.py": "17dcc57b5dc45ab3738d619ca4a1ed8008d8269d845ba6ad3ca70e4ff936347f"
+}

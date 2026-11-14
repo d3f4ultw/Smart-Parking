@@ -1,0 +1,27 @@
+FROM docker.io/library/maven:3.10.0-eclipse-temurin-27@sha256:4572303fb6014977a6abba5b735787f7da51c87fa089cb5607db4ebde1fb611e AS compilacion
+
+WORKDIR /aplicacion
+
+COPY pom.xml ./
+COPY src ./src
+
+RUN mvn --batch-mode --no-transfer-progress -DskipTests package \
+    && archivo_jar="$(find target -maxdepth 1 -type f -name 'smartparking-api-*.jar' -print -quit)" \
+    && test -n "$archivo_jar" \
+    && recursos_sql="$(jar tf "$archivo_jar" | awk '/^BOOT-INF\/classes\/sql\/.*\.sql$/ { cuenta++ } END { print cuenta + 0 }')" \
+    && printf 'Recursos SQL empaquetados: %s\n' "$recursos_sql" \
+    && test "$recursos_sql" -eq 153
+
+FROM docker.io/library/eclipse-temurin:27-jre@sha256:227a129d4866d9adc606d377681fffafe8f67925ccec4f44e85588566f906063
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /aplicacion
+
+COPY --from=compilacion --chown=10001:10001 /aplicacion/target/smartparking-api-*.jar /aplicacion/smartparking-api.jar
+
+USER 10001:10001
+
+ENTRYPOINT ["java", "-jar", "/aplicacion/smartparking-api.jar"]

@@ -1,0 +1,9 @@
+services:
+  api:
+    image: localhost/smartparking-tarjetas-rfid-mixto-api:20261029-075516
+    pull_policy: never
+    build: !reset null
+  web:
+    image: localhost/smartparking-web-tarjetas-rfid-mixto-candidate:20261029-075516
+    pull_policy: never
+    build: !reset null

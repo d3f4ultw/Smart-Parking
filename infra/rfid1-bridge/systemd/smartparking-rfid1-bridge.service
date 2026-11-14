@@ -1,0 +1,21 @@
+[Unit]
+Description=SmartParking RFID 1 USB bridge
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/new-volume/SmartParking/infra/rfid1-bridge
+EnvironmentFile=/mnt/new-volume/SmartParking/infra/rfid1-bridge/private/.env
+ExecStart=/usr/bin/python3 -u /mnt/new-volume/SmartParking/infra/rfid1-bridge/bridge.py --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_5B52054849-if00
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=default.target

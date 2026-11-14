@@ -1,0 +1,12 @@
+{
+  "archivos_copia": 162,
+  "archivos_origen": 161,
+  "archivos_solo_qa": [
+    "tests/browser/vision-c1-monitor.spec.ts"
+  ],
+  "diferencias_con_origen": [],
+  "faltantes_en_copia": [],
+  "sha256_arbol": "dea25515120ad6477aef9593af03a3cdf63137f6d3e0d9037978010aca44301a",
+  "archivos_app_server": 93,
+  "sha256_app_server": "eb1477a9870e82c39f843de54b86208693f088e54afb3f304c0e3df8598e0b37"
+}

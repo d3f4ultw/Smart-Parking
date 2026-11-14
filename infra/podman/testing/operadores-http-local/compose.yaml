@@ -1,0 +1,170 @@
+name: ${TEST_PROJECT_NAME:?Define TEST_PROJECT_NAME outside the repository}
+
+services:
+  db:
+    image: docker.io/library/postgres:18.6-bookworm
+    command: ["postgres", "-p", "5432"]
+    environment:
+      POSTGRES_DB: ${TEST_POSTGRES_DB:?}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+      PGPORT: "5432"
+      TEST_OPERATOR_EMAIL: ${TEST_OPERATOR_EMAIL:?}
+      TEST_OPERATOR_PASSWORD_INITIAL: ${TEST_OPERATOR_PASSWORD_INITIAL:?}
+      TEST_OPERATOR_PASSWORD_FINAL: ${TEST_OPERATOR_PASSWORD_FINAL:?}
+    volumes:
+      - datos_temporales:/var/lib/postgresql
+    networks: [red_temporal]
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -p 5432 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  mailpit:
+    image: docker.io/axllent/mailpit:v1.32.0
+    ports:
+      - "127.0.0.1::8025"
+    networks: [red_temporal]
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  api:
+    build:
+      context: ../../../../services/api
+      dockerfile: Containerfile
+      labels:
+        com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+    environment:
+      POSTGRES_DB: ${TEST_POSTGRES_DB:?}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-operadores-http-local-test
+      SESSION_TIMEOUT: 30m
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_PROTOCOL: smtp
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      SMTP_AUTH: "false"
+      SMTP_STARTTLS_ENABLE: "false"
+      SMTP_CONNECTION_TIMEOUT: "1500"
+      SMTP_READ_TIMEOUT: "1500"
+      SMTP_WRITE_TIMEOUT: "1500"
+      SMTP_FROM: operadores-http-local@smartparking.example.test
+      SMTP_TEST_CONNECTION: "false"
+      OPERADORES_ORIGEN_ACTIVACION: http://localhost:3000
+      OPERADORES_PERMITIR_HTTP_LOCAL: "true"
+    networks: [red_temporal]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  web:
+    image: localhost/${TEST_PROJECT_NAME:?}-web-dev:local
+    pull_policy: never
+    build:
+      context: ../../../../apps/web
+      dockerfile: Containerfile
+      target: development
+      labels:
+        com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+    working_dir: /workspace
+    environment:
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PNPM_STORE_DIR: /pnpm/store
+      NUXT_API_INTERNAL_BASE: http://api:8080
+      NUXT_TELEMETRY_DISABLED: "1"
+    volumes:
+      - type: bind
+        source: ../../../../apps/web
+        target: /workspace
+      - web_node_modules:/workspace/node_modules
+      - web_pnpm_store:/pnpm/store
+      - web_nuxt_cache:/workspace/.nuxt
+    command: [sh, -lc, "pnpm install --frozen-lockfile && pnpm run dev"]
+    networks: [red_temporal, web_egress]
+    depends_on:
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  browser-http-local:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: [browser]
+    working_dir: /workspace
+    network_mode: service:web
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - |
+        set -euo pipefail
+        cp -a /test-source/. /workspace/
+        cp -a /test-http-local/. /workspace/
+        corepack enable
+        corepack prepare pnpm@10.34.8 --activate
+        pnpm install --frozen-lockfile --store-dir=/pnpm/store
+        pnpm exec playwright test --config=playwright.config.ts operadores-http-local.spec.ts
+    environment:
+      BASE_URL: http://localhost:3000
+      TEST_WEB_BASE_URL: http://localhost:3000
+      TEST_API_INTERNAL_BASE: http://api:8080
+      TEST_MAILPIT_BASE_URL: http://mailpit:8025
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:?}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:?}
+      TEST_OWNER_PASSWORD_ADMIN: ${TEST_OWNER_PASSWORD_ADMIN:?}
+      TEST_OPERATOR_EMAIL: ${TEST_OPERATOR_EMAIL:?}
+      TEST_OPERATOR_PASSWORD_INITIAL: ${TEST_OPERATOR_PASSWORD_INITIAL:?}
+      TEST_OPERATOR_PASSWORD_FINAL: ${TEST_OPERATOR_PASSWORD_FINAL:?}
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    volumes:
+      - type: bind
+        source: ../../../../apps/web/tests/browser
+        target: /test-source
+        read_only: true
+      - type: bind
+        source: ./browser
+        target: /test-http-local
+        read_only: true
+      - browser_workspace:/workspace
+      - browser_node_modules:/workspace/node_modules
+      - browser_pnpm_store:/pnpm/store
+    depends_on:
+      web:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+volumes:
+  datos_temporales:
+  web_node_modules:
+  web_pnpm_store:
+  web_nuxt_cache:
+  browser_workspace:
+  browser_node_modules:
+  browser_pnpm_store:
+
+networks:
+  red_temporal:
+    driver: bridge
+    internal: true
+  web_egress:
+    driver: bridge

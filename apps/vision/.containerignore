@@ -1,0 +1,32 @@
+# Modelos, calibraciones y configuracion privada deben montarse desde fuera.
+*.pt
+**/*.pt
+*.onnx
+**/*.onnx
+zones*.json
+**/zones*.json
+*.fuente.json
+**/*.fuente.json
+.env
+.env.*
+**/.env
+**/.env.*
+*.env
+**/*.env
+config/
+**/config/
+
+# Artefactos locales, entornos y caches.
+__pycache__/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.pytest_cache/
+**/.pytest_cache/
+.cache/
+**/.cache/
+cache/
+**/cache/
+.venv/
+**/.venv/
+.git/

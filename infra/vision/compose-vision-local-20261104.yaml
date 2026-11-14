@@ -1,0 +1,38 @@
+services:
+  vision:
+    image: ${VISION_IMAGEN:-localhost/smartparking-vision-local@sha256:be70aa498a361b0f7fb61535cc94e78f7cbca16fd7b0708ad3090c3eadb2beb8}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        until [ -s /data/config/http-usb-url.txt ] && [ -s /data/models/yolo26n.pt ]; do sleep 10; done
+        huella="$$(sha256sum /data/config/http-usb-url.txt | cut -d ' ' -f1)"
+        exec flock --no-fork /cache/locks/vision-inferencia.lock flock --no-fork "/cache/locks/$${huella}.lock" python /opt/smartparking/vision-recarga-controlada.py -- python /app/detect.py \
+          --permanente --headless --publish-java --control-socket /run/vision-control/control.sock \
+          --local-proposal /data/local-calibration/zones.json --zones /data/config/zones.json \
+          --model /data/models/yolo26n.pt --source http
+    environment: !override
+      VISION_HTTP_URL_FILE: /data/config/http-usb-url.txt
+      VISION_JAVA_URL: ${VISION_JAVA_URL:-}
+      VISION_JAVA_HTTP_PRIVADO: ${VISION_JAVA_HTTP_PRIVADO:-}
+      VISION_FUENTE_ID: ${VISION_FUENTE_ID:-}
+      VISION_REVISION_CALIBRACION: ${VISION_REVISION_CALIBRACION:-}
+      VISION_HASH_CALIBRACION: ${VISION_HASH_CALIBRACION:-}
+      VISION_TOKEN_ARCHIVO: ${VISION_TOKEN_ARCHIVO:-}
+      XAUTHORITY: /run/vision-control/vision.Xauthority
+      QT_QPA_PLATFORM: xcb
+      QT_XCB_NO_MITSHM: "1"
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "2"
+      OPENCV_LOG_LEVEL: ERROR
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes: !override
+      - ../../apps/vision:/app:ro
+      - ../vision/vision-recarga-controlada.py:/opt/smartparking/vision-recarga-controlada.py:ro
+      - ../../var/vision/config:/data/config:rw
+      - ../../var/vision/models:/data/models:ro
+      - ../../var/vision/cache:/cache:rw
+      - ../../var/vision/escritorio-local/calibracion:/data/local-calibration:rw
+      - ${XDG_RUNTIME_DIR:?Se requiere XDG_RUNTIME_DIR}/smartparking-vision:/run/vision-control:rw
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro

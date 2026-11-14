@@ -1,0 +1,65 @@
+name: ${RFID1_TEST_PROJECT_NAME:?Define un nombre de proyecto RFID 1 desechable}
+
+services:
+  db:
+    image: docker.io/library/postgres:18.6-bookworm
+    command: ["postgres", "-p", "5432"]
+    environment:
+      POSTGRES_DB: ${RFID1_TEST_POSTGRES_DB:?Define la base de prueba RFID 1}
+      POSTGRES_USER: ${RFID1_TEST_POSTGRES_USER:?Define el usuario de prueba RFID 1}
+      POSTGRES_PASSWORD: ${RFID1_TEST_POSTGRES_PASSWORD:?Define la contrasena sintetica RFID 1}
+      PGPORT: "5432"
+    volumes:
+      - datos_rfid1:/var/lib/postgresql
+    networks:
+      - red_rfid1
+    labels:
+      com.smartparking.testing.run: ${RFID1_TEST_PROJECT_NAME:?}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api:
+    image: localhost/${RFID1_TEST_PROJECT_NAME:?}-api:stage1
+    build:
+      context: ../../../../services/api
+      dockerfile: ../../infra/podman/testing/rfid1/Containerfile.offline
+      network: none
+      labels:
+        com.smartparking.testing.run: ${RFID1_TEST_PROJECT_NAME:?}
+    environment:
+      POSTGRES_DB: ${RFID1_TEST_POSTGRES_DB:?}
+      POSTGRES_USER: ${RFID1_TEST_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${RFID1_TEST_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-rfid1-stage1-test
+      SESSION_TIMEOUT: 30m
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "false"
+      RFID1_TOKEN_SHA256: ${RFID1_TOKEN_SHA256:-}
+    ports:
+      - "127.0.0.1::8080"
+    networks:
+      - red_rfid1
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      com.smartparking.testing.run: ${RFID1_TEST_PROJECT_NAME:?}
+
+volumes:
+  datos_rfid1:
+
+networks:
+  red_rfid1:
+    driver: bridge
+    internal: true

@@ -1,0 +1,87 @@
+{
+  "intento": 1,
+  "salidaPlaywright": 1,
+  "fallo": "assertion del arnés exigió Vision entre cada par de altas; el gate solicitado solo requiere que exista al menos un evento Vision entre eventos administrativos.",
+  "reconexionEjecutada": false,
+  "altasHttp201": 6,
+  "publicacionesVisionHttp200": 6,
+  "eventosProxy": {
+    "empleado": 6,
+    "vision": 6,
+    "heartbeats": 2,
+    "maxStreams": 1
+  },
+  "timeline": [
+    {
+      "tipo": "empleado.heartbeat",
+      "orden": null,
+      "enMs": 1793702546640
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 2,
+      "enMs": 1793702546822
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 3,
+      "enMs": 1793702546995
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 4,
+      "enMs": 1793702547170
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 5,
+      "enMs": 1793702547390
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 6,
+      "enMs": 1793702548189
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 7,
+      "enMs": 1793702548264
+    },
+    {
+      "tipo": "empleado.directorio.actualizado",
+      "orden": 8,
+      "enMs": 1793702549139
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 9,
+      "enMs": 1793702550625
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 10,
+      "enMs": 1793702553058
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 11,
+      "enMs": 1793702555496
+    },
+    {
+      "tipo": "empleado.heartbeat",
+      "orden": null,
+      "enMs": 1793702557572
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 12,
+      "enMs": 1793702557930
+    },
+    {
+      "tipo": "vision.ocupacion.actualizada",
+      "orden": 13,
+      "enMs": 1793702560365
+    }
+  ],
+  "payloadsGuardados": false
+}

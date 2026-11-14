@@ -1,0 +1,8 @@
+# El contexto Vision se construye desde la raíz, con solo código requerido.
+**
+!apps/
+!apps/vision/
+!apps/vision/*.py
+!infra/
+!infra/vision/
+!infra/vision/vision-recarga-controlada.py

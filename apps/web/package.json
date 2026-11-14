@@ -1,0 +1,33 @@
+{
+  "name": "@smartparking/web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0",
+    "lint": "vp lint -c tooling/vite.config.ts app app.config.ts nuxt.config.ts tooling/vite.config.ts",
+    "format:check": "vp fmt -c tooling/vite.config.ts app app.config.ts nuxt.config.ts tooling/vite.config.ts package.json tsconfig.json --check",
+    "format": "vp fmt -c tooling/vite.config.ts app app.config.ts nuxt.config.ts tooling/vite.config.ts package.json tsconfig.json --write",
+    "typecheck": "nuxt typecheck",
+    "check": "vp run format:check && vp run lint && vp run typecheck",
+    "build": "nuxt build",
+    "test:accesos": "node tests/accesos-historial-bff.mjs && node tests/historial-accesos-unidad.mjs",
+    "start": "node .output/server/index.mjs"
+  },
+  "dependencies": {
+    "@nuxt/ui": "4.12.0",
+    "nuxt": "4.6.2",
+    "tailwindcss": "4.2.2"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@iconify-json/lucide": "^1.2.147",
+    "typescript": "5.9.3",
+    "vite-plus": "1.4.0",
+    "vue-tsc": "3.3.13"
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "packageManager": "pnpm@10.34.8"
+}

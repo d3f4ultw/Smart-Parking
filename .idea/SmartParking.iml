@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="JAVA_MODULE" version="4">
+  <component name="NewModuleRootManager" inherit-compiler-output="true">
+    <content url="file://$PROJECT_DIR$">
+      <excludeFolder url="file://$PROJECT_DIR$/.agents" />
+      <excludeFolder url="file://$PROJECT_DIR$/.codegraph" />
+      <excludeFolder url="file://$PROJECT_DIR$/docs" />
+      <excludeFolder url="file://$PROJECT_DIR$/reports" />
+      <excludePattern pattern="AGENTS.md" />
+      <excludePattern pattern="DECISIONS.md" />
+    </content>
+    <exclude-output />
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

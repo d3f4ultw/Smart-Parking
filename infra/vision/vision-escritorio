@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -u
+
+raiz="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+mostrar_error() {
+  local mensaje="$1"
+  if command -v xmessage >/dev/null && [[ -n "${DISPLAY:-}" ]]; then
+    xmessage -center -title 'Smart Parking Vision - Aviso' -buttons 'Cerrar:0' "$mensaje" && return
+  fi
+  if command -v notify-send >/dev/null; then
+    notify-send -u critical 'Smart Parking Vision' "$mensaje" && return
+  fi
+  printf '%s\n' "$mensaje" >&2
+}
+
+if ! command -v systemctl >/dev/null || ! command -v python3 >/dev/null; then
+  mostrar_error 'No se puede comprobar el servicio Vision de este usuario.'
+  exit 1
+fi
+if ! "$raiz/infra/vision/vision-local-20261104" preparar-grafica; then
+  mostrar_error 'No se pudo validar la sesión gráfica local. Vision permanece sin ventana.'
+  exit 1
+fi
+estado="$(systemctl --user show smartparking-vision.service --property=ActiveState --value 2>/dev/null)" || {
+  mostrar_error 'No se puede comprobar el estado del servicio Vision.'
+  exit 1
+}
+case "$estado" in
+  active|activating|reloading) ;;
+  inactive|failed|deactivating)
+    if ! systemctl --user start smartparking-vision.service; then
+      mostrar_error 'Vision no pudo iniciar. Revisa el servicio Vision.'
+      exit 1
+    fi
+    ;;
+  *)
+    mostrar_error 'El estado del servicio Vision no es reconocible. No se abrirá otra cámara.'
+    exit 1
+    ;;
+esac
+socket="$XDG_RUNTIME_DIR/smartparking-vision/control.sock"
+for ((intento=0; intento<100; intento++)); do
+  [[ -S "$socket" ]] && break
+  estado="$(systemctl --user show smartparking-vision.service --property=ActiveState --value 2>/dev/null)" || break
+  [[ "$estado" == active || "$estado" == activating || "$estado" == reloading ]] || break
+  sleep 0.3
+done
+if [[ ! -S "$socket" ]] || ! python3 "$raiz/apps/vision/control_interfaz_local.py" "$socket" "${DISPLAY:-}"; then
+  mostrar_error 'El runtime Vision no aceptó mostrar la ventana. Revisa la sesión gráfica y el servicio.'
+  exit 1
+fi
+if command -v wmctrl >/dev/null; then
+  wmctrl -a 'Smart Parking Vision - Deteccion' >/dev/null 2>&1 || true
+fi

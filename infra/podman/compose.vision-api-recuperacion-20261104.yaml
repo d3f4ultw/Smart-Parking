@@ -1,0 +1,6 @@
+# Imagen API autentica previa, recuperable del OCI por su ID de contenido.
+services:
+  api:
+    image: sha256:5a43140bd40938dfc0f438d2f45476cf91c1af29ea4a74f1f7e6fda5e01fbd1b
+    pull_policy: never
+    build: !reset null

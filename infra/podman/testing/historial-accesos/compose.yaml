@@ -1,0 +1,35 @@
+name: ${HISTORIAL_ACCESOS_PROJECT_NAME:?Define el proyecto temporal de historial}
+
+services:
+  db:
+    image: docker.io/library/postgres:18.6-bookworm
+    command: ["postgres", "-p", "5432"]
+    environment:
+      POSTGRES_DB: ${HISTORIAL_ACCESOS_POSTGRES_DB:?Define la base sintética}
+      POSTGRES_USER: ${HISTORIAL_ACCESOS_POSTGRES_USER:?Define el usuario sintético}
+      POSTGRES_PASSWORD: ${HISTORIAL_ACCESOS_POSTGRES_PASSWORD:?Define la contraseña temporal}
+      PGPORT: "5432"
+    volumes:
+      - datos_historial:/var/lib/postgresql
+    networks:
+      - red_historial
+    ports:
+      - "127.0.0.1::5432"
+    labels:
+      com.smartparking.testing.run: ${HISTORIAL_ACCESOS_PROJECT_NAME:?}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  datos_historial:
+
+networks:
+  red_historial:
+    driver: bridge
+    internal: true

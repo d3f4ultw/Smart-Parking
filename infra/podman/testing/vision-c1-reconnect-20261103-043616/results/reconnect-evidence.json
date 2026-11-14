@@ -1,0 +1,361 @@
+{
+  "lotesEmpleados": {
+    "sinVision": {
+      "altasHttp": [
+        201,
+        201,
+        201
+      ],
+      "latenciaInicioPostASseMs": {
+        "n": 3,
+        "p50Ms": 16,
+        "p95Ms": 16,
+        "maxMs": 16
+      },
+      "eventosVisionEntreAltas": false,
+      "timeline": [
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 37,
+          "enMs": 1793702966622
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 38,
+          "enMs": 1793702966788
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 39,
+          "enMs": 1793702966960
+        }
+      ]
+    },
+    "duranteVisionEspaciada": {
+      "altasHttp": [
+        201,
+        201,
+        201
+      ],
+      "visionPublicacionesHttp": [
+        200,
+        200,
+        200
+      ],
+      "visionCommitTimestamps": 3,
+      "latenciaInicioPostASseMs": {
+        "n": 3,
+        "p50Ms": 15,
+        "p95Ms": 17,
+        "maxMs": 17
+      },
+      "visionEventosEntreAltas": [
+        true,
+        true
+      ],
+      "timeline": [
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 40,
+          "enMs": 1793702967183
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 41,
+          "enMs": 1793702967978
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 42,
+          "enMs": 1793702970006
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 43,
+          "enMs": 1793702970408
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 44,
+          "enMs": 1793702972830
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 45,
+          "enMs": 1793702972843
+        }
+      ]
+    }
+  },
+  "reconexion": {
+    "apiHealthHttpAntesDespues": [
+      200,
+      200
+    ],
+    "sesionValidaAntesCorteDuranteCorteTrasReconexion": [
+      true,
+      true,
+      true
+    ],
+    "rutaFinal": "/admin",
+    "heartbeatObservadoPorProxy": 1,
+    "cierresDespuesHeartbeat": 1,
+    "streamsActivosMaxPorPestana": 1,
+    "streamsActivosFinalPorPestana": 1,
+    "solicitudesSseProxy": 1,
+    "solicitudesSseInicialAntesReset": 1,
+    "reconexionesConCursor": 1,
+    "eventSourceObjetosAbiertos": 2,
+    "erroresEventSource": 1,
+    "visionEventosObservados": 4,
+    "secuenciasNegocioCliente": {
+      "eventos": [
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 37,
+          "enMs": 1793702966622
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 38,
+          "enMs": 1793702966788
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 39,
+          "enMs": 1793702966960
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 40,
+          "enMs": 1793702967183
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 41,
+          "enMs": 1793702967978
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 42,
+          "enMs": 1793702970006
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 43,
+          "enMs": 1793702970408
+        },
+        {
+          "tipo": "empleado.directorio.actualizado",
+          "orden": 44,
+          "enMs": 1793702972830
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 45,
+          "enMs": 1793702972843
+        },
+        {
+          "tipo": "vision.ocupacion.actualizada",
+          "orden": 46,
+          "enMs": 1793702977721
+        }
+      ],
+      "ordenes": [
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46
+      ],
+      "monotonas": true
+    },
+    "framesProxySinPayload": [
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 37,
+        "tieneId": true,
+        "enMs": 1793702966621
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 38,
+        "tieneId": true,
+        "enMs": 1793702966787
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 39,
+        "tieneId": true,
+        "enMs": 1793702966960
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 40,
+        "tieneId": true,
+        "enMs": 1793702967183
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 41,
+        "tieneId": true,
+        "enMs": 1793702967977
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 42,
+        "tieneId": true,
+        "enMs": 1793702970006
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 43,
+        "tieneId": true,
+        "enMs": 1793702970407
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 44,
+        "tieneId": true,
+        "enMs": 1793702972829
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 45,
+        "tieneId": true,
+        "enMs": 1793702972842
+      },
+      {
+        "tipo": "empleado.heartbeat",
+        "orden": null,
+        "tieneId": false,
+        "enMs": 1793702976571
+      },
+      {
+        "tipo": "empleado.heartbeat",
+        "orden": null,
+        "tieneId": false,
+        "enMs": 1793702977587
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 46,
+        "tieneId": true,
+        "enMs": 1793702977720
+      }
+    ],
+    "heartbeatsSseProxy": {
+      "framesSinLineaId": 2,
+      "framesConLineaId": 0
+    },
+    "postVisionDuranteCorteHttp": 200,
+    "getVisionAntesReconectar": 3,
+    "getVisionAlReabrir": 2,
+    "getVisionDespuesReabrir": 5,
+    "getVisionRespuestasHttp": [
+      200,
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "snapshotCompletoHttp": 200,
+    "snapshotPosteriorAlCommitYReapertura": true,
+    "navegacionesRegistradas": [
+      "/panel",
+      "/panel",
+      "/panel",
+      "/panel",
+      "/panel",
+      "/admin"
+    ],
+    "snapshotFinal": [
+      {
+        "etiqueta": "C01",
+        "estado": "Ocupado"
+      },
+      {
+        "etiqueta": "C02",
+        "estado": "Libre"
+      }
+    ],
+    "navegacionesPosterioresAlCorte": 0,
+    "interaccionUsuarioDespuesDelMontaje": false
+  },
+  "evidenciaSse": {
+    "sinPayloadsNiCuerpos": true,
+    "timelineGlobal": [
+      {
+        "tipo": "empleado.heartbeat",
+        "orden": null,
+        "enMs": 1793702966419
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 37,
+        "enMs": 1793702966622
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 38,
+        "enMs": 1793702966788
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 39,
+        "enMs": 1793702966960
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 40,
+        "enMs": 1793702967183
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 41,
+        "enMs": 1793702967978
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 42,
+        "enMs": 1793702970006
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 43,
+        "enMs": 1793702970408
+      },
+      {
+        "tipo": "empleado.directorio.actualizado",
+        "orden": 44,
+        "enMs": 1793702972830
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 45,
+        "enMs": 1793702972843
+      },
+      {
+        "tipo": "empleado.heartbeat",
+        "orden": 45,
+        "enMs": 1793702976572
+      },
+      {
+        "tipo": "empleado.heartbeat",
+        "orden": null,
+        "enMs": 1793702977588
+      },
+      {
+        "tipo": "vision.ocupacion.actualizada",
+        "orden": 46,
+        "enMs": 1793702977721
+      }
+    ]
+  }
+}

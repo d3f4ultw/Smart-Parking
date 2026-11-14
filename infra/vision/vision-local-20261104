@@ -1,0 +1,568 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+raiz="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+imagen_produccion="localhost/smartparking-vision:20261112-094157"
+imagen_recuperacion="localhost/smartparking-vision-local@sha256:be70aa498a361b0f7fb61535cc94e78f7cbca16fd7b0708ad3090c3eadb2beb8"
+overlay_recuperacion="$raiz/infra/vision/compose-vision-local-20261104.yaml"
+base="$raiz/var/vision"
+config="${VISION_CONFIG_DIR:-$base/config}"
+comando="${1:-ayuda}"
+if (($#)); then shift; fi
+modo_recuperacion=0
+imagen="$imagen_produccion"
+archivos_compose=(-f "$raiz/infra/podman/compose.yaml")
+if [[ "$comando" == servicio || "$comando" == detener-servicio ]]; then
+  case "${VISION_ROLLBACK:-0}" in
+    0) ;;
+    1)
+      modo_recuperacion=1
+      imagen="$imagen_recuperacion"
+      archivos_compose+=(-f "$overlay_recuperacion")
+      export VISION_IMAGEN="$imagen"
+      ;;
+    *) echo 'VISION_ROLLBACK solo admite 0 o 1.' >&2; exit 2 ;;
+  esac
+fi
+
+uso() {
+  cat <<'EOF'
+Uso: infra/vision/vision-local-20261104 construir
+     infra/vision/vision-local-20261104 servicio
+     infra/vision/vision-local-20261104 detener-servicio
+     infra/vision/vision-local-20261104 preparar-directorio-control
+     infra/vision/vision-local-20261104 escritorio
+     infra/vision/vision-local-20261104 calibrar [--http | --usb DISPOSITIVO | --imagen ARCHIVO | --droidcam-usb] [opciones]
+     infra/vision/vision-local-20261104 monitorizar [--http | --usb DISPOSITIVO | --imagen ARCHIVO | --droidcam-usb] [opciones]
+     infra/vision/vision-local-20261104 simular [--sin-gui] [-- ARGS_DETECTOR...]
+
+Opciones: --http-file ARCHIVO (una URL privada, modo 0600 o más restrictivo),
+          --sin-gui (monitorización o simulación), -- (argumentos del detector).
+Sin selección de fuente se utiliza DroidCam USB. Configure la URL local del
+forward en var/vision/config/http-usb-url.txt. Para HTTP seleccione --http; la URL
+se conserva en var/vision/config/http-url.txt. No incluya URLs en comandos ni informes.
+Para DroidCam USB, verifique antes el forward ADB en el host.
+--droidcam-usb utiliza el forward HTTP existente en loopback del host.
+La publicación opcional a Java usa la configuración privada validada en
+var/vision/config/vision-java.env. La calibración permanece independiente.
+Para una recuperación explícita con la imagen verificada anterior, establezca
+VISION_ROLLBACK=1 solo en el entorno de systemd antes de reiniciar el servicio.
+EOF
+}
+
+validar_archivo_privado() {
+  local archivo="$1"
+  local nombre="$2"
+  [[ -f "$archivo" && -r "$archivo" && -s "$archivo" ]] || { echo "Falta la configuración privada de $nombre." >&2; return 1; }
+  local modo
+  modo="$(stat -c '%a' -- "$archivo")"
+  (( (8#$modo & 077) == 0 )) || { echo "La configuración privada de $nombre requiere permisos 0600 o más restrictivos." >&2; return 1; }
+}
+
+preparar_directorio_control() {
+  [[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" && ! -L "$XDG_RUNTIME_DIR" ]] || {
+    echo 'No está disponible el directorio privado de la sesión de usuario.' >&2; return 1;
+  }
+  [[ "$(stat -c '%u:%a' -- "$XDG_RUNTIME_DIR")" == "$(id -u):700" ]] || {
+    echo 'El directorio de sesión no es privado o no pertenece al usuario.' >&2; return 1;
+  }
+  control="$XDG_RUNTIME_DIR/smartparking-vision"
+  [[ ! -L "$control" ]] || { echo 'El directorio de control no puede ser un enlace.' >&2; return 1; }
+  mkdir -m 700 -p "$control"
+  [[ "$(stat -c '%u:%a' -- "$control")" == "$(id -u):700" ]] || {
+    echo 'El directorio de control Vision no es privado o no pertenece al usuario.' >&2; return 1;
+  }
+  if [[ ! -e "$control/vision.Xauthority" && ! -L "$control/vision.Xauthority" ]]; then
+    (set -o noclobber; : > "$control/vision.Xauthority") || return 1
+    chmod 600 "$control/vision.Xauthority"
+  fi
+  [[ -f "$control/vision.Xauthority" && ! -L "$control/vision.Xauthority" \
+    && "$(stat -c '%u:%a:%h' -- "$control/vision.Xauthority")" == "$(id -u):600:1" ]] || {
+    echo 'La autoridad gráfica de Vision no es privada.' >&2; return 1;
+  }
+}
+
+renovar_autoridad_grafica() {
+  command -v python3 >/dev/null && command -v xauth >/dev/null && command -v xdpyinfo >/dev/null || {
+    echo 'Vision necesita python3, xauth y xdpyinfo para validar la sesión gráfica.' >&2
+    return 1
+  }
+  python3 - "$control/vision.Xauthority" <<'PY'
+import ctypes
+import os
+import re
+import resource
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:
+    print("No se pudo proteger la autorización gráfica en memoria.", file=sys.stderr)
+    sys.exit(1)
+
+destino = Path(sys.argv[1])
+display = os.environ.get("DISPLAY", "")
+origen = os.environ.get("XAUTHORITY", "")
+entorno = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LANG": "C"}
+candidata = None
+respaldo = None
+conservar_respaldo = False
+descriptor = None
+creado = False
+anterior = None
+
+
+def ejecutar(comando, *, datos=None, variables=None):
+    return subprocess.run(comando, input=datos, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, env=variables or entorno, timeout=5)
+
+
+def validar_display(autoridad):
+    variables = dict(entorno, DISPLAY=display, XAUTHORITY=str(autoridad))
+    return ejecutar(["xdpyinfo"], variables=variables).returncode == 0
+
+
+def escribir(descriptor, contenido):
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    restante = memoryview(contenido)
+    while restante:
+        cantidad = os.write(descriptor, restante)
+        if cantidad <= 0:
+            raise OSError("No se pudo completar la escritura privada")
+        restante = restante[cantidad:]
+    os.ftruncate(descriptor, len(contenido))
+    os.fsync(descriptor)
+    if os.pread(descriptor, len(contenido) + 1, 0) != contenido:
+        raise OSError("No se pudo verificar la escritura privada")
+
+
+def privado(estado):
+    return (stat.S_ISREG(estado.st_mode) and estado.st_uid == os.getuid()
+            and stat.S_IMODE(estado.st_mode) == 0o600 and estado.st_nlink == 1)
+
+
+try:
+    if not re.fullmatch(r":[0-9]+(?:\.[0-9]+)?", display) or not origen:
+        raise ValueError("No hay una sesión X11 local configurada")
+    if not Path(origen).is_file() or not os.access(origen, os.R_OK):
+        raise ValueError("No hay autoridad gráfica legible")
+    lectura = ejecutar(["xauth", "-f", origen, "nlist", display])
+    lineas = lectura.stdout.splitlines()
+    if (lectura.returncode != 0 or not lineas
+            or any(len(linea) < 4 or not re.fullmatch(rb"[0-9a-fA-F ]+", linea) for linea in lineas)):
+        raise ValueError("No hay una autorización gráfica utilizable")
+    datos = b"\n".join(b"ffff" + linea[4:] for linea in lineas) + b"\n"
+    temporal, nombre = tempfile.mkstemp(prefix=".vision-xauth-candidata-", dir=destino.parent)
+    os.close(temporal)
+    candidata = Path(nombre)
+    fusion = ejecutar(["xauth", "-f", str(candidata), "nmerge", "-"], datos=datos)
+    if fusion.returncode != 0:
+        raise ValueError("No se pudo preparar la autorización gráfica")
+    os.chmod(candidata, 0o600)
+    estado_candidata = candidata.lstat()
+    if not privado(estado_candidata) or not 0 < estado_candidata.st_size <= 1048576:
+        raise ValueError("La autorización gráfica preparada no es privada")
+    if not validar_display(candidata):
+        raise ValueError("La sesión gráfica no acepta la autorización preparada")
+    with candidata.open("rb") as archivo:
+        nuevo = archivo.read(1048577)
+    if not 0 < len(nuevo) <= 1048576:
+        raise ValueError("La autorización gráfica preparada no es válida")
+
+    try:
+        descriptor = os.open(destino, os.O_RDWR | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        descriptor = os.open(destino, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        creado = True
+    estado = os.fstat(descriptor)
+    if not privado(estado) or estado.st_size > 1048576:
+        raise ValueError("El archivo gráfico de Vision no es privado")
+    identidad = (estado.st_dev, estado.st_ino)
+    if not creado:
+        anterior = os.pread(descriptor, estado.st_size + 1, 0)
+        fd_respaldo, nombre = tempfile.mkstemp(prefix=".vision-xauth-respaldo-", dir=destino.parent)
+        respaldo = Path(nombre)
+        try:
+            escribir(fd_respaldo, anterior)
+        finally:
+            os.close(fd_respaldo)
+
+    try:
+        escribir(descriptor, nuevo)
+        actual = destino.lstat()
+        if (actual.st_dev, actual.st_ino) != identidad or not privado(actual) or not validar_display(destino):
+            raise OSError("No se pudo validar la autoridad gráfica de Vision")
+    except Exception:
+        if anterior is not None:
+            try:
+                escribir(descriptor, anterior)
+                actual = destino.lstat()
+                if (actual.st_dev, actual.st_ino) != identidad:
+                    conservar_respaldo = True
+            except Exception:
+                conservar_respaldo = True
+        elif creado:
+            actual = destino.lstat()
+            if (actual.st_dev, actual.st_ino) == identidad:
+                destino.unlink()
+        raise
+except (OSError, ValueError, subprocess.SubprocessError):
+    print("Vision espera una sesión gráfica local con autorización válida.", file=sys.stderr)
+    if conservar_respaldo:
+        print(f"No se pudo restaurar la autoridad anterior; respaldo privado: {respaldo}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    if descriptor is not None:
+        os.close(descriptor)
+    if candidata is not None:
+        candidata.unlink(missing_ok=True)
+    if respaldo is not None and not conservar_respaldo:
+        respaldo.unlink(missing_ok=True)
+PY
+}
+
+if [[ "$comando" == preparar-directorio-control ]]; then
+  (($# == 0)) || { uso >&2; exit 2; }
+  preparar_directorio_control
+  exit 0
+fi
+
+if [[ "$comando" == preparar-grafica ]]; then
+  (($# == 0)) || { uso >&2; exit 2; }
+  preparar_directorio_control
+  renovar_autoridad_grafica
+  exit 0
+fi
+
+if [[ "$comando" == servicio || "$comando" == detener-servicio ]]; then
+  (($# == 0)) || { uso >&2; exit 2; }
+  command -v podman >/dev/null || { echo 'Falta Podman.' >&2; exit 1; }
+  archivo_compose="$raiz/infra/podman/compose.yaml"
+  unset VISION_IMAGEN VISION_OVERLAY_COMPOSE
+  if ((modo_recuperacion)); then export VISION_IMAGEN="$imagen"; fi
+  directorio_compose="$raiz/infra/podman"
+  if [[ "$comando" == servicio ]]; then
+    config="$base/config"
+    export VISION_JAVA_URL= VISION_JAVA_HTTP_PRIVADO= VISION_FUENTE_ID= \
+      VISION_REVISION_CALIBRACION= VISION_HASH_CALIBRACION= VISION_TOKEN_ARCHIVO=
+    mkdir -p "$config" "$base/models" "$base/cache/locks" "$base/evidencia"
+    preparar_directorio_control
+    exec {bloqueo_servicio}<>"$base/cache/locks/vision-servicio.lock"
+    flock -n "$bloqueo_servicio" || { echo 'Otra instancia ya administra el servicio Vision.' >&2; exit 1; }
+    validar_archivo_privado "$config/http-usb-url.txt" 'DroidCam USB' || exit 1
+    [[ -s "$base/models/yolo26n.pt" ]] || { echo 'Falta el modelo de Vision.' >&2; exit 1; }
+    fuente_activa=""; revision_activa=""; hash_activo=""; configuracion_java_valida=1
+    archivo_java="$config/vision-java.env"
+    if [[ -f "$archivo_java" && -s "$archivo_java" ]] && validar_archivo_privado "$archivo_java" 'publicación Java'; then
+      while IFS= read -r linea || [[ -n "$linea" ]]; do
+        [[ -z "$linea" || "$linea" == \#* ]] && continue
+        [[ "$linea" == *=* ]] || { configuracion_java_valida=0; break; }
+        clave_env="${linea%%=*}"; valor_env="${linea#*=}"
+        case "$clave_env" in
+          VISION_FUENTE_ID)
+            [[ -z "$fuente_activa" && "$valor_env" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || { configuracion_java_valida=0; break; }
+            fuente_activa="$valor_env" ;;
+          VISION_REVISION_CALIBRACION)
+            [[ -z "$revision_activa" && "$valor_env" =~ ^[1-9][0-9]*$ ]] || { configuracion_java_valida=0; break; }
+            revision_activa="$valor_env" ;;
+          VISION_HASH_CALIBRACION)
+            [[ -z "$hash_activo" && "$valor_env" =~ ^[0-9a-fA-F]{64}$ ]] || { configuracion_java_valida=0; break; }
+            hash_activo="$valor_env" ;;
+          *) configuracion_java_valida=0; break ;;
+        esac
+      done < "$archivo_java"
+    else
+      configuracion_java_valida=0
+    fi
+    if ((configuracion_java_valida)) && [[ -n "$fuente_activa" && -n "$revision_activa" && -n "$hash_activo" ]] \
+        && validar_archivo_privado "$config/token-java.txt" 'token Java'; then
+      puerto_api="${API_PORT:-}"
+      if [[ -z "$puerto_api" && -r "$directorio_compose/.env" ]]; then
+        puerto_api="$(awk -F= '$1 == "API_PORT" {print $2; exit}' "$directorio_compose/.env")"
+      fi
+      if [[ "$puerto_api" =~ ^[1-9][0-9]{0,4}$ ]] && ((puerto_api <= 65535)); then
+        export VISION_JAVA_URL="http://127.0.0.1:$puerto_api" VISION_JAVA_HTTP_PRIVADO=1
+        export VISION_FUENTE_ID="$fuente_activa" VISION_REVISION_CALIBRACION="$revision_activa"
+        export VISION_HASH_CALIBRACION="$hash_activo"
+        export VISION_TOKEN_ARCHIVO=/data/config/token-java.txt
+      fi
+    fi
+    podman image exists "$imagen" || { echo 'Construya la imagen candidata con infra/vision/vision-local-20261104 construir.' >&2; exit 1; }
+    exec {bloqueo_grafico}<>"$base/cache/locks/vision-inferencia.lock"
+    flock -n "$bloqueo_grafico" || { echo 'Otra ejecución de Vision conserva el motor de inferencia.' >&2; exit 1; }
+    if podman container exists smartparking-vision; then
+      estado_vision="$(podman inspect --format '{{.State.Status}}' smartparking-vision)" || exit 1
+      case "$estado_vision" in
+        created|exited|stopped) ;;
+        *) echo 'Ya existe una instancia Vision activa.' >&2; exit 1 ;;
+      esac
+    else
+      resultado=$?
+      ((resultado == 1)) || { echo 'No se pudo verificar el contenedor Vision.' >&2; exit 1; }
+    fi
+    flock -u "$bloqueo_grafico"
+    exec {bloqueo_grafico}>&-
+    cd "$directorio_compose"
+    if podman compose --project-directory "$directorio_compose" --profile vision-runtime \
+        "${archivos_compose[@]}" up --no-deps --no-build --pull never --exit-code-from vision vision; then
+      exit 0
+    else
+      exit $?
+    fi
+  fi
+  cd "$directorio_compose"
+  exec podman compose --project-directory "$directorio_compose" --profile vision-runtime \
+    "${archivos_compose[@]}" stop --timeout 20 vision
+fi
+
+case "$comando" in
+  ayuda|-h|--help) uso; exit 0 ;;
+  construir)
+    (($# == 0)) || { uso >&2; exit 2; }
+    exec podman build --pull=never --layers \
+      --ignorefile "$raiz/infra/vision/.containerignore" \
+      --tag "$imagen_produccion" \
+      --file "$raiz/infra/vision/Containerfile" "$raiz"
+    ;;
+  escritorio)
+    (($# == 0)) || { uso >&2; exit 2; }
+    exec "$raiz/infra/vision/vision-escritorio"
+    ;;
+  calibrar|monitorizar|simular) ;;
+  *) uso >&2; exit 2 ;;
+esac
+
+fuente=""
+ruta=""
+archivo_http="$config/http-url.txt"
+archivo_http_explicito=0
+sin_gui=0
+argumentos_extra=()
+while (($#)); do
+  case "$1" in
+    --http|--droidcam-usb)
+      [[ -z "$fuente" && "$comando" != simular ]] || { echo 'Seleccione una sola fuente.' >&2; exit 2; }
+      fuente="${1#--}"; shift ;;
+    --usb|--imagen)
+      [[ -z "$fuente" && "$comando" != simular && $# -ge 2 ]] || { echo 'Falta ruta o hay más de una fuente.' >&2; exit 2; }
+      fuente="${1#--}"; ruta="$2"; shift 2 ;;
+    --http-file)
+      (($# >= 2)) || { echo 'Falta archivo de URL HTTP.' >&2; exit 2; }
+      archivo_http="$2"; archivo_http_explicito=1; shift 2 ;;
+    --sin-gui) sin_gui=1; shift ;;
+    --) shift; argumentos_extra=("$@"); break ;;
+    *) echo "Opción no reconocida: $1" >&2; uso >&2; exit 2 ;;
+  esac
+done
+[[ "$comando" != calibrar || "$sin_gui" == 0 ]] || { echo 'Esta aplicación requiere ventana.' >&2; exit 2; }
+if [[ "$comando" == simular ]]; then
+  fuente=simulacion
+else
+  fuente="${fuente:-droidcam-usb}"
+  if ((archivo_http_explicito == 0)); then
+    if [[ "$fuente" == droidcam-usb ]]; then
+      archivo_http="$config/http-usb-url.txt"
+    else
+      archivo_http="$config/http-url.txt"
+    fi
+  fi
+fi
+
+# La integración es opcional y no debe activarse con una configuración parcial.
+integracion_java=0
+if [[ "$comando" != calibrar ]] && [[ -n "${VISION_JAVA_URL:-}${VISION_FUENTE_ID:-}${VISION_REVISION_CALIBRACION:-}${VISION_TOKEN_ARCHIVO:-}" ]]; then
+  if [[ ( "$comando" == simular || "$fuente" == imagen ) && "${VISION_SIMULACION_JAVA:-0}" != 1 ]]; then
+    echo 'Simulación o imagen estática: publicación Java desactivada.' >&2
+  else
+    [[ -n "${VISION_JAVA_URL:-}" && -n "${VISION_FUENTE_ID:-}" && -n "${VISION_REVISION_CALIBRACION:-}" && -n "${VISION_TOKEN_ARCHIVO:-}" ]] || {
+      echo 'La integración Java requiere URL, fuente, revisión y archivo de token.' >&2; exit 1;
+    }
+    [[ "$VISION_JAVA_URL" != *'@'* ]] || { echo 'La URL de Java no debe incluir credenciales.' >&2; exit 1; }
+    integracion_java=1
+  fi
+fi
+
+command -v podman >/dev/null || { echo 'Falta Podman.' >&2; exit 1; }
+command -v flock >/dev/null || { echo 'Falta flock.' >&2; exit 1; }
+podman image exists "$imagen" || { echo 'Construya primero la imagen con infra/vision/vision-local-20261104 construir.' >&2; exit 1; }
+config="$(realpath -m -- "$config")"
+case "$config" in "$raiz"/*) ;; *) echo 'VISION_CONFIG_DIR debe estar dentro del proyecto.' >&2; exit 1 ;; esac
+mkdir -p "$base/models" "$base/cache/locks" "$base/evidencia"
+mkdir -p "$config"
+cache_contenedor="$base/cache"
+
+opciones=(--rm --init --name "smartparking-vision-${comando}-$$" --userns=keep-id
+  --cap-drop=all --security-opt=no-new-privileges --http-proxy=false
+  --cpus "${VISION_CPUS:-6}" --memory "${VISION_MEMORY:-4g}" --pids-limit 256
+  --env OMP_NUM_THREADS=2 --env OPENBLAS_NUM_THREADS=1 --env MKL_NUM_THREADS=2
+  --env OPENCV_LOG_LEVEL=ERROR
+  --volume "$cache_contenedor:/cache:rw"
+  --volume "$base/models:/data/models:ro")
+if [[ "$comando" == calibrar ]]; then
+  opciones+=(--volume "$config:/data/config:rw")
+else
+  opciones+=(--volume "$config:/data/config:ro")
+fi
+if command -v getenforce >/dev/null && [[ "$(getenforce)" == Enforcing ]]; then
+  opciones+=(--security-opt=label=disable)
+fi
+
+case "$fuente" in
+  http|droidcam-usb)
+    [[ -f "$archivo_http" && -r "$archivo_http" && -s "$archivo_http" ]] || { echo 'Falta el archivo privado con la URL HTTP.' >&2; exit 1; }
+    archivo_http="$(realpath -- "$archivo_http")"
+    modo="$(stat -c '%a' -- "$archivo_http")"
+    (( (8#$modo & 077) == 0 )) || { echo 'El archivo de URL debe tener permisos 0600 o más restrictivos.' >&2; exit 1; }
+    opciones+=(--volume "$archivo_http:/run/vision-http-url:ro" --env VISION_HTTP_URL_FILE=/run/vision-http-url)
+    argumentos_fuente=(--source http)
+    clave="$(sha256sum -- "$archivo_http" | cut -d' ' -f1)"
+    ;;
+  usb)
+    # El path elegido puede ser un enlace estable; no perder esa identidad.
+    ruta_seleccionada="$(realpath -ms -- "$ruta")"
+    [[ "$ruta_seleccionada" == /dev/* ]] || { echo 'El dispositivo V4L2 debe estar dentro de /dev.' >&2; exit 1; }
+    ruta="$(realpath -- "$ruta" 2>/dev/null)" || { echo 'No se puede resolver el dispositivo V4L2.' >&2; exit 1; }
+    [[ -c "$ruta" && -r "$ruta" && -w "$ruta" ]] || { echo 'El dispositivo V4L2 no existe o no permite lectura/escritura.' >&2; exit 1; }
+    command -v v4l2-ctl >/dev/null || { echo 'Falta v4l2-ctl para inspeccionar el dispositivo.' >&2; exit 1; }
+    capacidades="$(v4l2-ctl --device "$ruta" --all)" || { echo 'No se pudo inspeccionar V4L2.' >&2; exit 1; }
+    [[ "$capacidades" == *'Video Capture'* && "$capacidades" == *'Streaming'* ]] || { echo 'El nodo elegido no anuncia captura y streaming.' >&2; exit 1; }
+    v4l2-ctl --device "$ruta" --list-formats-ext
+    id_camara="$(printf '%s' "$ruta_seleccionada" | sha256sum | cut -d' ' -f1)"
+    dispositivo_contenedor="/dev/vision-$id_camara"
+    opciones+=(--device "$ruta:$dispositivo_contenedor:rw")
+    argumentos_fuente=(--source camera --device "$dispositivo_contenedor")
+    clave="$(printf 'v4l2:%s' "$ruta" | sha256sum | cut -d' ' -f1)"
+    ;;
+  imagen)
+    ruta="$(realpath -- "$ruta" 2>/dev/null)" || { echo 'No se puede resolver la imagen.' >&2; exit 1; }
+    [[ -f "$ruta" && -r "$ruta" ]] || { echo 'No se puede leer la imagen.' >&2; exit 1; }
+    carpeta_simulacion="$(realpath -- "$raiz/apps/vision/simulations")"
+    if [[ "$(dirname -- "$ruta")" == "$carpeta_simulacion" ]]; then
+      # La calibración y el playback deben compartir la misma identidad.
+      imagen_contenedor="/app/simulations/$(basename -- "$ruta")"
+    else
+      # No revelar la ruta del origen en la ruta visible para la aplicación.
+      id_imagen="$(printf '%s' "$ruta" | sha256sum | cut -d' ' -f1)"
+      imagen_contenedor="/run/vision-imagenes/$id_imagen/imagen"
+      opciones+=(--volume "$ruta:$imagen_contenedor:ro")
+    fi
+    argumentos_fuente=(--image "$imagen_contenedor")
+    clave="" ;;
+  simulacion)
+    argumentos_fuente=(--simulation-dir /app/simulations --no-loop)
+    clave="" ;;
+esac
+
+if ((integracion_java)); then
+  archivo_token="$(realpath -- "$VISION_TOKEN_ARCHIVO" 2>/dev/null)" || { echo 'No se puede resolver el archivo de token Vision.' >&2; exit 1; }
+  case "$archivo_token" in "$raiz"/*) ;; *) echo 'El archivo de token debe estar dentro del proyecto.' >&2; exit 1 ;; esac
+  case "$archivo_token" in
+    "$raiz/apps/vision/"*|"$raiz/services/api/"*) echo 'El token no puede estar dentro de un contexto de construcción.' >&2; exit 1 ;;
+  esac
+  [[ -f "$archivo_token" && -r "$archivo_token" && -s "$archivo_token" ]] || { echo 'Falta el archivo privado de token Vision.' >&2; exit 1; }
+  modo="$(stat -c '%a' -- "$archivo_token")"
+  (( (8#$modo & 077) == 0 )) || { echo 'El archivo de token debe tener permisos 0600 o más restrictivos.' >&2; exit 1; }
+  opciones+=(--volume "$archivo_token:/run/vision-token:ro" --env VISION_TOKEN_ARCHIVO=/run/vision-token
+    --env "VISION_JAVA_URL=$VISION_JAVA_URL" --env "VISION_FUENTE_ID=$VISION_FUENTE_ID"
+    --env "VISION_REVISION_CALIBRACION=$VISION_REVISION_CALIBRACION")
+  [[ "${VISION_JAVA_HTTP_PRIVADO:-0}" != 1 ]] || opciones+=(--env VISION_JAVA_HTTP_PRIVADO=1)
+  [[ "${VISION_SIMULACION_JAVA:-0}" != 1 ]] || opciones+=(--env VISION_SIMULACION_JAVA=1)
+fi
+
+# USB con forward ADB necesita loopback del host; el resto exige una red elegida.
+if [[ "$fuente" == droidcam-usb ]]; then
+  if ((integracion_java)); then
+    [[ -z "${VISION_RED_JAVA:-}" || "$VISION_RED_JAVA" == host ]] || { echo 'DroidCam USB con forward requiere la red host.' >&2; exit 1; }
+  fi
+  opciones+=(--network host)
+elif ((integracion_java)); then
+  [[ -n "${VISION_RED_JAVA:-}" ]] || { echo 'Seleccione explícitamente VISION_RED_JAVA para publicar en Java.' >&2; exit 1; }
+  if [[ "$VISION_RED_JAVA" != host ]]; then
+    podman network exists "$VISION_RED_JAVA" || { echo 'La red Java seleccionada no existe.' >&2; exit 1; }
+  fi
+  opciones+=(--network "$VISION_RED_JAVA")
+elif [[ "$fuente" != http ]]; then
+  opciones+=(--network none)
+fi
+
+autoridad_temporal=""
+pid_podman=""
+nombre="smartparking-vision-${comando}-$$"
+reanudar_servicio=0
+limpiar() {
+  local resultado=$?
+  trap - EXIT INT TERM HUP
+  if [[ -n "$pid_podman" ]]; then
+    # El lector de captura puede necesitar hasta 12 s para cerrar sin carreras.
+    podman stop --ignore --time 20 "$nombre" >/dev/null 2>&1 || true
+    kill "$pid_podman" 2>/dev/null || true
+    wait "$pid_podman" 2>/dev/null || true
+    podman stop --ignore --time 2 "$nombre" >/dev/null 2>&1 || true
+  fi
+  [[ -z "$autoridad_temporal" ]] || rm -f -- "$autoridad_temporal"
+  if ((reanudar_servicio)); then
+    systemctl --user start smartparking-vision.service || echo 'No se pudo reanudar el servicio permanente de Vision.' >&2
+  fi
+  exit "$resultado"
+}
+trap limpiar EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+if [[ "$comando" == calibrar ]] && command -v systemctl >/dev/null && systemctl --user is-active --quiet smartparking-vision.service; then
+  reanudar_servicio=1
+  if ! systemctl --user stop smartparking-vision.service; then
+    reanudar_servicio=0
+    echo 'No se pudo pausar el servicio permanente de Vision; no se abrirá otra captura.' >&2
+    exit 1
+  fi
+fi
+
+if [[ "$comando" == monitorizar || "$comando" == simular ]]; then
+  exec {bloqueo_global}>"$base/cache/locks/vision-inferencia.lock"
+  if ! flock -n "$bloqueo_global"; then
+    echo 'Otra ejecución de Vision ya está usando el motor de inferencia.' >&2
+    exit 1
+  fi
+fi
+
+if [[ -n "$clave" ]]; then
+  exec {bloqueo}>"$base/cache/locks/$clave.lock"
+  flock -n "$bloqueo" || { echo 'La fuente ya está en uso por otra ejecución de Vision.' >&2; exit 1; }
+fi
+
+if ((sin_gui == 0)); then
+  command -v xauth >/dev/null || { echo 'Falta xauth.' >&2; exit 1; }
+  [[ "${DISPLAY:-}" =~ ^:([0-9]+)(\.[0-9]+)?$ ]] || { echo 'Se requiere DISPLAY X11 local, por ejemplo :0.' >&2; exit 1; }
+  display_num="${BASH_REMATCH[1]}"
+  socket="/tmp/.X11-unix/X$display_num"
+  [[ -S "$socket" && -r "${XAUTHORITY:-}" && -d "${XDG_RUNTIME_DIR:-}" ]] || { echo 'No están disponibles el socket o la autoridad X11 de la sesión.' >&2; exit 1; }
+  autoridad_temporal="$(mktemp "$XDG_RUNTIME_DIR/smartparking-vision-xauth.XXXXXXXX")"
+  xauth -f "$XAUTHORITY" nlist ":$display_num" | sed 's/^..../ffff/' | xauth -f "$autoridad_temporal" nmerge -
+  [[ -s "$autoridad_temporal" ]] || { echo 'La autoridad X11 no contiene el display seleccionado.' >&2; exit 1; }
+  chmod 600 "$autoridad_temporal"
+  opciones+=(--env "DISPLAY=$DISPLAY" --env XAUTHORITY=/run/vision.Xauthority
+    --env QT_QPA_PLATFORM=xcb --env QT_XCB_NO_MITSHM=1
+    --volume "$autoridad_temporal:/run/vision.Xauthority:ro" --volume "$socket:$socket:ro")
+fi
+
+if [[ "$comando" == calibrar ]]; then
+  programa=(python calibrar_zonas.py --zones /data/config/zones.json)
+else
+  [[ -s "$base/models/yolo26n.pt" ]] || { echo 'Falta el modelo explícito var/vision/models/yolo26n.pt.' >&2; exit 1; }
+  programa=(python detect.py --zones /data/config/zones.json --model /data/models/yolo26n.pt)
+  ((sin_gui == 0)) || programa+=(--headless)
+fi
+podman run "${opciones[@]}" "$imagen" "${programa[@]}" "${argumentos_fuente[@]}" "${argumentos_extra[@]}" &
+pid_podman=$!
+set +e
+wait "$pid_podman"
+resultado=$?
+set -e
+pid_podman=""
+exit "$resultado"

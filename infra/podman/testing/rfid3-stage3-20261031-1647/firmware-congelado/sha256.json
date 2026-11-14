@@ -1,0 +1,9 @@
+{
+  "aplicacion.py": "bc337e8b4c69b3f52f8387369a06538460fba030ac3e304ec1f30acfd1087c60",
+  "buzzer.py": "0f2fe927c21627a71d19e367e658c13551e7ed5602333833ca7f0981cd869309",
+  "comunicacion/protocolo.py": "0e7a60a145c36e4cb62de2cccc230cf1245a7e2b9469de5dc934c7ffc3f028ca",
+  "comunicacion/serial.py": "edb4c3391e0f3ade0e7edfe5a456b4eb9f6d18539e34ddfccf4841aab63814a1",
+  "config.py": "55fe211b8655b1fcba6f7518e3e8410f67e7bed0c6ceb6069d1ecbe4bb34dc2d",
+  "entrada_rfid2.py": "4e86f4670a81402a823bb11d4a22af66f80f0f29afd7f974834687d2375790e9",
+  "salida_rfid3.py": "16162c9abfb2c48c79b5b235135e6c31c23b878809cc29a0c0954b0926f5c87d"
+}

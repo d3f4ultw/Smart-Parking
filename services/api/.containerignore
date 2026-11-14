@@ -1,0 +1,5 @@
+# El build necesita exclusivamente el POM y los recursos fuente.
+**
+!pom.xml
+!src/
+!src/**

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Smart Parking Vision
+Comment=Monitoreo y calibración local de Vision
+Exec=/mnt/new-volume/SmartParking/infra/vision/vision-escritorio
+Path=/mnt/new-volume/SmartParking
+Icon=camera-video
+Terminal=false
+Categories=AudioVideo;Video;
+StartupNotify=false

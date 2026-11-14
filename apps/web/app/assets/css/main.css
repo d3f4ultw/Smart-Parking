@@ -1,0 +1,147 @@
+@import 'tailwindcss';
+@import '@nuxt/ui';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/manrope';
+@import './panel.css';
+@import './admin.css';
+:root {
+  color-scheme: light;
+  font-family: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --app-primary: #5c3a86;
+  --app-primary-hover: #6c4a97;
+  --app-focus: #76569a;
+  --app-background: #f6f5f7;
+  --app-surface: #ffffff;
+  --app-surface-hover: #f8f6fa;
+  --app-foreground: #29252f;
+  --app-muted: #746f7b;
+  --app-border: #e8e5eb;
+  --app-success: #16794b;
+  --app-error: #b42318;
+  --sidebar-gradient: linear-gradient(160deg, #1d1725 0%, #17121e 56%, #15101b 100%);
+  --ui-primary: var(--app-primary);
+  --ui-primary-hover: var(--app-primary-hover);
+  --ui-color-primary-500: var(--app-primary);
+  --ui-color-primary-600: var(--app-primary);
+  --ui-color-primary-700: var(--app-primary-hover);
+  --ui-color-primary-800: var(--app-primary-hover);
+  --ui-primary-foreground: #ffffff;
+  --ui-bg: var(--app-surface);
+  --ui-bg-muted: var(--app-background);
+  --ui-bg-elevated: var(--app-surface);
+  --ui-border: var(--app-border);
+  --ui-text: var(--app-foreground);
+  --ui-text-muted: var(--app-muted);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--app-background);
+  color: var(--app-foreground);
+  cursor: default;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+:where(
+    button,
+    a[href],
+    [role='button'],
+    [role='link'],
+    input[type='button'],
+    input[type='submit'],
+    input[type='reset'],
+    input[type='checkbox'],
+    input[type='radio'],
+    input[type='file'],
+    select,
+    summary
+  ):not(:disabled):not([aria-disabled='true']) {
+  cursor: pointer;
+}
+:where(
+  button,
+  a[href],
+  [role='button'],
+  [role='link'],
+  input[type='button'],
+  input[type='submit'],
+  input[type='reset'],
+  input[type='checkbox'],
+  input[type='radio'],
+  input[type='file'],
+  select,
+  summary
+):where(:disabled, [aria-disabled='true']) {
+  cursor: default;
+}
+:where(button, a[href], input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--app-focus);
+  outline-offset: 3px;
+}
+.pagina-inicio {
+  display: grid;
+  min-height: 100vh;
+  padding: 24px;
+  place-items: center;
+}
+.tarjeta-inicio {
+  width: min(100%, 720px);
+  border-color: var(--app-border);
+  background: var(--app-surface);
+  color: var(--app-foreground);
+}
+.contenido-inicio {
+  display: grid;
+  gap: 40px;
+  padding: 8px;
+}
+.encabezado-inicio,
+.interaccion-inicio {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+}
+.marca,
+.sobrelinea {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.mensaje-inicio h1 {
+  margin: 10px 0;
+  color: var(--app-foreground);
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1.05;
+}
+.descripcion {
+  max-width: 48ch;
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 1.05rem;
+  line-height: 1.65;
+}
+.interaccion-inicio {
+  justify-content: flex-start;
+  border-top: 1px solid var(--app-border);
+  padding-top: 24px;
+}
+.estado-interaccion {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 0.9rem;
+}

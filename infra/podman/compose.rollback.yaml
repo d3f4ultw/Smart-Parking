@@ -1,0 +1,18 @@
+# Recuperación puntual a las imágenes productivas previas al corte.
+# La API histórica no incluye curl; bash solo comprueba que el puerto local acepte conexiones.
+services:
+  api:
+    image: localhost/smartparking-api-runtime:20261104-final
+    pull_policy: never
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080'
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 45s
+
+  web:
+    image: localhost/smartparking-web-vision-c1:20261103-034214
+    pull_policy: never

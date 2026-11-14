@@ -1,0 +1,67 @@
+name: ${RFID2_STAGE1_PROJECT_NAME:?Define un proyecto RFID 2 Stage 1 desechable}
+
+services:
+  db:
+    image: docker.io/library/postgres:18.6-bookworm
+    command: ["postgres", "-p", "5432"]
+    environment:
+      POSTGRES_DB: ${RFID2_STAGE1_POSTGRES_DB:?Define la base sintética RFID 2}
+      POSTGRES_USER: ${RFID2_STAGE1_POSTGRES_USER:?Define el usuario sintético RFID 2}
+      POSTGRES_PASSWORD: ${RFID2_STAGE1_POSTGRES_PASSWORD:?Define una contraseña sintética RFID 2}
+      PGPORT: "5432"
+    volumes:
+      - datos_rfid2_stage1:/var/lib/postgresql
+    networks:
+      - red_rfid2_stage1
+    ports:
+      - "127.0.0.1::5432"
+    labels:
+      com.smartparking.testing.run: ${RFID2_STAGE1_PROJECT_NAME:?}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api:
+    image: localhost/${RFID2_STAGE1_PROJECT_NAME:?}-api:stage1
+    build:
+      context: ../../../../services/api
+      dockerfile: ../../infra/podman/testing/rfid1/Containerfile.offline
+      network: none
+      labels:
+        com.smartparking.testing.run: ${RFID2_STAGE1_PROJECT_NAME:?}
+    environment:
+      POSTGRES_DB: ${RFID2_STAGE1_POSTGRES_DB:?}
+      POSTGRES_USER: ${RFID2_STAGE1_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${RFID2_STAGE1_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-rfid2-stage1-test
+      SESSION_TIMEOUT: 30m
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "false"
+      RFID1_TOKEN_SHA256: ${RFID2_STAGE1_TOKEN_SHA256:?Define hash Bearer sintético}
+    ports:
+      - "127.0.0.1::8080"
+    networks:
+      - red_rfid2_stage1
+    depends_on:
+      db:
+        condition: service_healthy
+    labels:
+      com.smartparking.testing.run: ${RFID2_STAGE1_PROJECT_NAME:?}
+
+volumes:
+  datos_rfid2_stage1:
+
+networks:
+  red_rfid2_stage1:
+    driver: bridge
+    internal: true

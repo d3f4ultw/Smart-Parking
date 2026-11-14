@@ -1,0 +1,5 @@
+/private/run.env
+/private/*.log
+/private/*.json
+/results/*
+!/results/.keep

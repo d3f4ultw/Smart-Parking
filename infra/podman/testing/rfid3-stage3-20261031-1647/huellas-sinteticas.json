@@ -1,0 +1,74 @@
+{
+  "asociacion_tarjeta_rfid1": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "captura_rfid1": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "cliente_codigo_publico": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "cliente_stripe": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "configuracion_estacionamiento": {
+    "filas": 1,
+    "sha256": "e9441db431ba9bb9e0f9e29d49d52fee5acb1722f66965f687a0617ead642f16"
+  },
+  "cuenta": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "empleado": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "flyway_schema_history": {
+    "filas": 13,
+    "sha256": "d523f9da866685b16140bc3e33732a916a814778cf6f2257500d7981a8eb3314"
+  },
+  "idempotencia_accion_operador": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "idempotencia_registro_empleado": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "idempotencia_registro_operador": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "intento_checkout": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "invitacion_operador": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "movimiento_estacionamiento": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "recuperacion_contrasena_operador": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stripe_evento_procesado": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "suscripcion_cliente": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "uid_temporal_rfid1": {
+    "filas": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

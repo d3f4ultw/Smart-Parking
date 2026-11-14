@@ -1,0 +1,122 @@
+[
+  {
+    "bytes": 8153,
+    "ruta": "aplicacion.py",
+    "sha256": "e5aa8debb59f01590d1f563498b40aa5dac7bf86d4ce4de9a63798ddd62083ab"
+  },
+  {
+    "bytes": 139,
+    "ruta": "boot.py",
+    "sha256": "16f5b4bcb120e9a032242b47967e649a0cc577b41939e81ef7d4b4da181bd17f"
+  },
+  {
+    "bytes": 2679,
+    "ruta": "buzzer.py",
+    "sha256": "903dada6948c0d2af20ac991d3bc1316eef3e118b85316003119c161e6e76807"
+  },
+  {
+    "bytes": 5197,
+    "ruta": "captura.py",
+    "sha256": "fd752d45689e142633eeabb1d827201fcf945031da7ed9280025e80f95a983c9"
+  },
+  {
+    "bytes": 46,
+    "ruta": "comunicacion/__init__.py",
+    "sha256": "acc5f16d1c3ee0f86d09901b5856f90619df24f88e4deaddd3de7076b8223ca8"
+  },
+  {
+    "bytes": 1887,
+    "ruta": "comunicacion/protocolo.py",
+    "sha256": "4f834e7c356bbe8597bc8f0ad685e4fe8dd08150187e4e576e3c904411d4e805"
+  },
+  {
+    "bytes": 1351,
+    "ruta": "comunicacion/serial.py",
+    "sha256": "ae0aaeb6f57b5f2962e3335a7cb7d30ef770516b418a44f346c02107128913ff"
+  },
+  {
+    "bytes": 620,
+    "ruta": "config.py",
+    "sha256": "1ff65c5e32548da2106107bfa2473aeb324907ff802361857896c0a9838e43c5"
+  },
+  {
+    "bytes": 3984,
+    "ruta": "entrada_rfid2.py",
+    "sha256": "226d982868367ea736a2f71b7df471dc57ee8d2f572104e4a29f2cc7da8451f4"
+  },
+  {
+    "bytes": 17555,
+    "ruta": "esp32_test.py",
+    "sha256": "83dc412d67aafb134861974900495985ef098ad7126e9147b43f32346049b9db"
+  },
+  {
+    "bytes": 244,
+    "ruta": "main-legacy.py",
+    "sha256": "bf23868229c94be1ecf084cd27fef6d93b341e766bb5ce176a39c9ace607e455"
+  },
+  {
+    "bytes": 237,
+    "ruta": "main.py",
+    "sha256": "0f0884a4353c7fc9bb295cdc4e2dffe70132d344d3a8f8d1b3ac00aae5973bda"
+  },
+  {
+    "bytes": 35,
+    "ruta": "rfid/__init__.py",
+    "sha256": "1f9779373b6a3aa47c316f3d741c8ed2409c33e2251786e0e8df32b3e5382785"
+  },
+  {
+    "bytes": 1471,
+    "ruta": "rfid/bus_spi.py",
+    "sha256": "5070c1605809636422c995ff23c53ad4727dc8b81830409a070a2e8611632326"
+  },
+  {
+    "bytes": 3070,
+    "ruta": "rfid/lector.py",
+    "sha256": "f7b1e531c91e48d837c4ed85b30fd66ac76529d64254a8f95cbdff7ab1df9edf"
+  },
+  {
+    "bytes": 7170,
+    "ruta": "rfid/rc522.py",
+    "sha256": "5f7b98ad49b7928aadd5f4faf6130e143cbfbbd461edb3d7545a3fc7975d003b"
+  },
+  {
+    "bytes": 7853,
+    "ruta": "sp_buzzer_independiente_20261031_142037/original/aplicacion.py",
+    "sha256": "887b11c62969477ed269778aaacdf2196f5dddefb6ff49aaf4c5329078dc97e9"
+  },
+  {
+    "bytes": 2656,
+    "ruta": "sp_buzzer_independiente_20261031_142037/original/buzzer.py",
+    "sha256": "360788c0bd5332da84ea938c2a4a84a7cbf06944ce04bcad71b8b0774c3a8d26"
+  },
+  {
+    "bytes": 603,
+    "ruta": "sp_buzzer_independiente_20261031_142037/original/config.py",
+    "sha256": "ed6cc92f8202373f55c5a979e0a0777539b4fb67d5cc06d3be3a182454a14104"
+  },
+  {
+    "bytes": 5515,
+    "ruta": "sp_rfid3_inst_20261031_085147/original/aplicacion.py",
+    "sha256": "b12fbc83771ed69ba249991cb439a9a912a9b2bc91e77fdc41f69b3c588cc63e"
+  },
+  {
+    "bytes": 490,
+    "ruta": "sp_rfid3_inst_20261031_085147/original/config.py",
+    "sha256": "8b2aed0841b3305611755c4efc2f4e3d07410833cac5c4db24a8163c2789bddf"
+  },
+  {
+    "bytes": 1443,
+    "ruta": "sp_rfid3_inst_20261031_085147/original/rfid/bus_spi.py",
+    "sha256": "d74dedf1125d09c978ca204a1d075996c2618a0a86e79d483f6a688de3e1db93"
+  },
+  {
+    "bytes": 2762,
+    "ruta": "sp_rfid3_inst_20261031_085147/original/rfid/lector.py",
+    "sha256": "7a7fe747447b4059370551ef6250d4db041be2e0afe32eaafa20006c21abc7d2"
+  },
+  {
+    "bytes": 6967,
+    "ruta": "sp_rfid3_inst_20261031_085147/original/rfid/rc522.py",
+    "sha256": "6a215bf2af7e6da91579f94f7f76bf686fcbcc0868655d8627ee9da48bed50f4"
+  }
+]

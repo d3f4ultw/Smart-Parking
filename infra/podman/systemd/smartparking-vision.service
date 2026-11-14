@@ -1,0 +1,17 @@
+[Unit]
+Description=Runtime permanente Vision de SmartParking
+Wants=smartparking-vision-adb.service
+After=smartparking-vision-adb.service
+
+[Service]
+Type=simple
+UMask=0077
+WorkingDirectory=/mnt/new-volume/SmartParking
+ExecStart=/mnt/new-volume/SmartParking/infra/vision/vision-local-20261104 servicio
+ExecStop=/mnt/new-volume/SmartParking/infra/vision/vision-local-20261104 detener-servicio
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=45s
+
+[Install]
+WantedBy=default.target

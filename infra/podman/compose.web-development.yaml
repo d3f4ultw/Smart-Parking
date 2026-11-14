@@ -1,0 +1,27 @@
+# Entorno de desarrollo Web aislado de API y PostgreSQL.
+services:
+  web:
+    image: localhost/smartparking-web-dev:local
+    pull_policy: never
+    build:
+      context: ../../apps/web
+      dockerfile: Containerfile
+      target: development
+    working_dir: /workspace
+    user: "1000:1000"
+    userns_mode: keep-id
+    init: true
+    command:
+      - sh
+      - -lc
+      - pnpm install --frozen-lockfile && pnpm run dev --host 0.0.0.0 --port 3000
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ../../apps/web:/workspace:rw
+      - web_dev_node_modules:/workspace/node_modules
+      - web_dev_pnpm_store:/pnpm/store
+
+volumes:
+  web_dev_node_modules:
+  web_dev_pnpm_store:

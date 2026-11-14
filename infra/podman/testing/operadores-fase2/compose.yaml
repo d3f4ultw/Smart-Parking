@@ -1,0 +1,267 @@
+services:
+  db:
+    environment:
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:-}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:-}
+
+  api:
+    environment:
+      OPERADORES_ORIGEN_ACTIVACION: http://web:3000
+
+  api-v6:
+    image: ${TEST_API_V6_IMAGE:-localhost/smartparking-api-v6-bootstrap:unset}
+    pull_policy: never
+    profiles: [v6-bootstrap]
+    environment:
+      POSTGRES_DB: ${TEST_POSTGRES_DB:?}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-operadores-v6-bootstrap
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_PROTOCOL: smtp
+      SMTP_AUTH: "false"
+      SMTP_STARTTLS_ENABLE: "false"
+      SMTP_FROM: owner-console-test@smartparking.example.test
+      OPERADORES_ORIGEN_ACTIVACION: http://web:3000
+    networks: [red_temporal]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  web:
+    image: localhost/${TEST_PROJECT_NAME:?}-web-dev:local
+    pull_policy: never
+    build:
+      context: ../../../apps/web
+      dockerfile: Containerfile
+      target: development
+      labels:
+        com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+    working_dir: /workspace
+    environment:
+      NODE_ENV: development
+      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS: web
+      HOST: 0.0.0.0
+      PORT: "3000"
+      PNPM_STORE_DIR: /pnpm/store
+      NUXT_API_INTERNAL_BASE: http://api:8080
+      NUXT_TELEMETRY_DISABLED: "1"
+    ports:
+      - "127.0.0.1::3000"
+    volumes:
+      - type: bind
+        source: ../../../apps/web
+        target: /workspace
+      - web_node_modules:/workspace/node_modules
+      - web_pnpm_store:/pnpm/store
+      - web_nuxt_cache:/workspace/.nuxt
+    command: [sh, -lc, "pnpm install --frozen-lockfile && pnpm run dev"]
+    networks: [red_temporal, web_egress]
+    depends_on:
+      api:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  browser-operadores:
+    image: mcr.microsoft.com/playwright:v1.64.1-noble
+    profiles: [browser]
+    working_dir: /workspace
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - |
+        set -e
+        cp -a /test-source/. /workspace/
+        corepack enable
+        corepack prepare pnpm@10.34.8 --activate
+        pnpm install --frozen-lockfile --store-dir /pnpm/store
+        pnpm exec playwright test --config=playwright.config.ts operadores-administracion.spec.ts
+    environment:
+      BASE_URL: http://web:3000
+      TEST_WEB_BASE_URL: http://web:3000
+      TEST_MAILPIT_BASE_URL: http://mailpit:8025
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:-}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:-}
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    volumes:
+      - type: bind
+        source: ../../../apps/web/tests/browser
+        target: /test-source
+        read_only: true
+      - browser_workspace:/workspace
+      - browser_node_modules:/workspace/node_modules
+      - browser_pnpm_store:/pnpm/store
+    networks: [red_temporal, web_egress]
+    depends_on:
+      web:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  api-acceptance-operadores:
+    image: docker.io/library/maven:3.10.0-eclipse-temurin-27
+    profiles: [acceptance]
+    working_dir: /workspace
+    entrypoint: [mvn]
+    command:
+      - --batch-mode
+      - -Dtest=OperadoresAdministracionAceptacionTest,OperadoresAdministracionReemisionAceptacionTest,OperadoresAdministracionRecuperacionConcurrenciaAceptacionTest
+      - -Dsmartparking.integration.disposable=true
+      - -Dsmartparking.integration.profile=test
+      - -Dsmartparking.api-url=http://api:8080
+      - -Dsmartparking.mailpit-url=http://mailpit:8025
+      - test
+    environment:
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:-}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:-}
+      TEST_DATABASE_URL: jdbc:postgresql://db:5432/${TEST_POSTGRES_DB:?}
+      TEST_DATABASE_USER: ${TEST_POSTGRES_USER:?}
+      TEST_DATABASE_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+    volumes:
+      - type: bind
+        source: ../../../services/api
+        target: /workspace
+      - maven_cache:/root/.m2
+    networks: [red_temporal, web_egress]
+    depends_on:
+      api:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  api-acceptance-v6-backfill:
+    image: docker.io/library/maven:3.10.0-eclipse-temurin-27
+    profiles: [backfill-replay]
+    working_dir: /workspace
+    entrypoint: [mvn]
+    command:
+      - --batch-mode
+      - -Dtest=OperadoresAdministracionBackfillAceptacionTest
+      - -Dsmartparking.integration.disposable=true
+      - -Dsmartparking.integration.profile=test
+      - -Dsmartparking.api-url=http://api:8080
+      - -Dsmartparking.mailpit-url=http://mailpit:8025
+      - test
+    environment:
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:-}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:-}
+      TEST_DATABASE_URL: jdbc:postgresql://db:5432/${TEST_POSTGRES_DB:?}
+      TEST_DATABASE_USER: ${TEST_POSTGRES_USER:?}
+      TEST_DATABASE_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+    volumes:
+      - type: bind
+        source: ../../../services/api
+        target: /workspace
+      - maven_cache:/root/.m2
+    networks: [red_temporal, web_egress]
+    depends_on:
+      api:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  api-smtp-fallido:
+    image: localhost/${TEST_PROJECT_NAME:?}-api-smtp-fallido:local
+    profiles: [smtp-failure]
+    build:
+      context: ../../../services/api
+      dockerfile: Containerfile
+      labels:
+        com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+    environment:
+      POSTGRES_DB: ${TEST_POSTGRES_DB:?}
+      POSTGRES_USER: ${TEST_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-operadores-smtp-fallido
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "true"
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1"
+      SMTP_PROTOCOL: smtp
+      SMTP_USERNAME: ""
+      SMTP_PASSWORD: ""
+      SMTP_AUTH: "false"
+      SMTP_STARTTLS_ENABLE: "false"
+      SMTP_CONNECTION_TIMEOUT: "1000"
+      SMTP_READ_TIMEOUT: "1000"
+      SMTP_WRITE_TIMEOUT: "1000"
+      SMTP_FROM: owner-console-test@smartparking.example.test
+      SMTP_TEST_CONNECTION: "false"
+      OPERADORES_ORIGEN_ACTIVACION: http://web:3000
+    networks: [red_temporal]
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+  api-acceptance-smtp-fallido:
+    image: docker.io/library/maven:3.10.0-eclipse-temurin-27
+    profiles: [acceptance-smtp]
+    working_dir: /workspace
+    entrypoint: [mvn]
+    command:
+      - --batch-mode
+      - -Dtest=OperadoresAdministracionSmtpAceptacionTest
+      - -Dsmartparking.integration.disposable=true
+      - -Dsmartparking.integration.profile=test
+      - -Dsmartparking.api-url=http://api-smtp-fallido:8080
+      - -Dsmartparking.mailpit-url=http://mailpit:8025
+      - test
+    environment:
+      TEST_OWNER_EMAIL: ${TEST_OWNER_EMAIL:-}
+      TEST_OWNER_PASSWORD: ${TEST_OWNER_PASSWORD:-}
+      TEST_DATABASE_URL: jdbc:postgresql://db:5432/${TEST_POSTGRES_DB:?}
+      TEST_DATABASE_USER: ${TEST_POSTGRES_USER:?}
+      TEST_DATABASE_PASSWORD: ${TEST_POSTGRES_PASSWORD:?}
+    volumes:
+      - type: bind
+        source: ../../../services/api
+        target: /workspace
+      - maven_cache:/root/.m2
+    networks: [red_temporal, web_egress]
+    depends_on:
+      api-smtp-fallido:
+        condition: service_started
+      mailpit:
+        condition: service_started
+    labels:
+      com.smartparking.testing.run: ${TEST_PROJECT_NAME:?}
+
+volumes:
+  web_node_modules:
+  web_pnpm_store:
+  web_nuxt_cache:
+  browser_workspace:
+  browser_node_modules:
+  browser_pnpm_store:
+  maven_cache:
+
+networks:
+  web_egress:
+    driver: bridge

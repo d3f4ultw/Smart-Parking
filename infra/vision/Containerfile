@@ -1,0 +1,39 @@
+FROM docker.io/library/python:3.14.7-slim@sha256:51dafde81dbdb6ebde285137a295cf18a47ca95234fe388a343719cb97305b3d
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    XDG_CACHE_HOME=/cache \
+    MPLCONFIGDIR=/cache/matplotlib \
+    YOLO_CONFIG_DIR=/cache/ultralytics
+
+# Qt de la wheel OpenCV y su plugin xcb usan estas bibliotecas compartidas.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates fontconfig libgl1 libglib2.0-0t64 \
+    util-linux \
+    libsm6 libxext6 libxrender1 libx11-6 libx11-xcb1 \
+    libxcb1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-shm0 \
+    libxcb-sync1 libxcb-xfixes0 libxcb-xinerama0 libxcb-xkb1 \
+    libxkbcommon-x11-0 && rm -rf /var/lib/apt/lists/*
+
+# Instalar las wheels CPU del índice oficial antes del resto evita CUDA.
+RUN python -m pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    'torch==2.14.1+cpu' 'torchvision==0.29.1+cpu' 'numpy==2.5.4' && \
+    python -m pip install --no-cache-dir \
+    'opencv-python==4.14.0.94' 'ultralytics==8.4.175' && \
+    python -m pip check && \
+    python -c "import cv2, torch, torchvision, ultralytics; info=cv2.getBuildInformation(); assert 'GUI:' in info and 'QT' in info and 'FFMPEG:' in info and 'YES' in info; assert '+cpu' in torch.__version__" && \
+    command -v flock >/dev/null
+
+WORKDIR /app
+ENV PYTHONPATH=/app
+
+# El contexto de build es la raíz del repositorio. Se copian solo módulos
+# Python: imágenes de prueba, calibraciones, modelos y configuración permanecen
+# fuera de la imagen y se montan desde el almacenamiento persistente.
+COPY apps/vision/*.py /app/
+COPY infra/vision/vision-recarga-controlada.py /opt/smartparking/vision-recarga-controlada.py
+
+CMD ["python", "detect.py", "--help"]

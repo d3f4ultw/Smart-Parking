@@ -1,0 +1,137 @@
+name: ${RFID1_STAGE1_PROJECT_NAME:?Define un proyecto desechable único}
+
+services:
+  db_fresh:
+    image: docker.io/library/postgres:18.6-bookworm
+    command:
+      - postgres
+      - -p
+      - "5432"
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_statement=none
+    environment:
+      POSTGRES_DB: ${RFID1_STAGE1_POSTGRES_DB:?Define la base sintética Stage 1}
+      POSTGRES_USER: ${RFID1_STAGE1_POSTGRES_USER:?Define el usuario sintético Stage 1}
+      POSTGRES_PASSWORD: ${RFID1_STAGE1_POSTGRES_PASSWORD:?Define la contraseña sintética Stage 1}
+      PGPORT: "5432"
+    volumes:
+      - datos_frescos:/var/lib/postgresql
+    networks:
+      - red_stage1
+    ports:
+      - "127.0.0.1::5432"
+    labels:
+      com.smartparking.testing.run: ${RFID1_STAGE1_PROJECT_NAME:?}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  db_restored:
+    image: docker.io/library/postgres:18.6-bookworm
+    command:
+      - postgres
+      - -p
+      - "5432"
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_parameter_max_length_on_error=0
+      - -c
+      - log_statement=none
+    environment:
+      POSTGRES_DB: ${RFID1_STAGE1_RESTORE_DB:?Define la base V11 restaurada}
+      POSTGRES_USER: ${RFID1_STAGE1_RESTORE_USER:?Define el usuario V11 restaurado}
+      POSTGRES_PASSWORD: ${RFID1_STAGE1_RESTORE_PASSWORD:?Define la contraseña V11 restaurada}
+      PGPORT: "5432"
+    volumes:
+      - datos_restaurados:/var/lib/postgresql
+    networks:
+      - red_stage1
+    labels:
+      com.smartparking.testing.run: ${RFID1_STAGE1_PROJECT_NAME:?}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -p 5432 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  api_fresh:
+    image: localhost/${RFID1_STAGE1_PROJECT_NAME:?}-api:stage1
+    pull_policy: never
+    build:
+      context: ../../../../services/api
+      dockerfile: ../../infra/podman/testing/rfid1/Containerfile.offline
+      network: none
+      labels:
+        com.smartparking.testing.run: ${RFID1_STAGE1_PROJECT_NAME:?}
+    environment:
+      POSTGRES_DB: ${RFID1_STAGE1_POSTGRES_DB:?}
+      POSTGRES_USER: ${RFID1_STAGE1_POSTGRES_USER:?}
+      POSTGRES_PASSWORD: ${RFID1_STAGE1_POSTGRES_PASSWORD:?}
+      POSTGRES_HOST: db_fresh
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-tarjetas-stage1
+      SESSION_TIMEOUT: 30m
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "false"
+      RFID1_TOKEN_SHA256: ${RFID1_STAGE1_TOKEN_SHA256:?Define hash del Bearer sintético}
+    ports:
+      - "127.0.0.1::8080"
+    networks:
+      - red_stage1
+    depends_on:
+      db_fresh:
+        condition: service_healthy
+    labels:
+      com.smartparking.testing.run: ${RFID1_STAGE1_PROJECT_NAME:?}
+
+  api_restored:
+    image: localhost/${RFID1_STAGE1_PROJECT_NAME:?}-api:stage1
+    pull_policy: never
+    environment:
+      POSTGRES_DB: ${RFID1_STAGE1_RESTORE_DB:?}
+      POSTGRES_USER: ${RFID1_STAGE1_RESTORE_USER:?}
+      POSTGRES_PASSWORD: ${RFID1_STAGE1_RESTORE_PASSWORD:?}
+      POSTGRES_HOST: db_restored
+      POSTGRES_PORT: "5432"
+      API_BIND_ADDRESS: 0.0.0.0
+      API_PORT: "8080"
+      SPRING_PROFILE: test
+      SPRING_APPLICATION_NAME: smartparking-api-tarjetas-stage1-restored
+      SESSION_TIMEOUT: 30m
+      SESSION_COOKIE_SECURE: "false"
+      SMTP_ENABLED: "false"
+      RFID1_TOKEN_SHA256: ${RFID1_STAGE1_TOKEN_SHA256:?}
+    ports:
+      - "127.0.0.1::8080"
+    networks:
+      - red_stage1
+    depends_on:
+      db_restored:
+        condition: service_healthy
+    labels:
+      com.smartparking.testing.run: ${RFID1_STAGE1_PROJECT_NAME:?}
+
+volumes:
+  datos_frescos:
+  datos_restaurados:
+
+networks:
+  red_stage1:
+    driver: bridge
+    internal: true

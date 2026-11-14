@@ -1,0 +1,13 @@
+[Unit]
+Description=Preparar el directorio efímero de control de Vision
+
+[Service]
+Type=oneshot
+UMask=0077
+RuntimeDirectory=smartparking-vision
+RuntimeDirectoryMode=0700
+ExecStart=/mnt/new-volume/SmartParking/infra/vision/vision-local-20261104 preparar-directorio-control
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

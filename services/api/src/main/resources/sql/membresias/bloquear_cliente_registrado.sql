@@ -1,0 +1,1 @@
+SELECT id FROM cuenta WHERE id = ? AND rol = 'CLIENTE' FOR UPDATE

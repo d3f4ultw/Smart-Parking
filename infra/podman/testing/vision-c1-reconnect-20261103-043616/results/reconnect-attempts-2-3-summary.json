@@ -1,0 +1,30 @@
+{
+  "intento2": {
+    "salidaPlaywright": 1,
+    "duracionAproximadaSegundos": 12.7,
+    "fallo": "El chequeo inicial incluía empleado.heartbeat en secuencias; su MessageEvent.lastEventId heredaba el ID anterior aunque el frame heartbeat no tuviera id.",
+    "reconexionYSnapshot": "Las aserciones anteriores al chequeo de secuencia aprobaron: cierre tras heartbeat, sesión DUENO válida, ruta /admin, reconexión, GET/DOM C01 OCUPADO y C02 LIBRE sin navegación.",
+    "latenciasComparativasRegistradas": false
+  },
+  "intento3": {
+    "salidaPlaywright": 1,
+    "duracionAproximadaSegundos": 13.1,
+    "fallo": "Mismo chequeo de secuencia; se capturó la secuencia del cliente antes del gate corregido.",
+    "secuenciasNegocioCliente": [26, 27, 28, 29, 30, 31, 32, 33, 34],
+    "heartbeatClienteConLastEventIdHeredado": 34,
+    "eventosProxy": [
+      {"tipo":"empleado.directorio.actualizado","orden":26,"enMs":1793702849190},
+      {"tipo":"empleado.directorio.actualizado","orden":27,"enMs":1793702849360},
+      {"tipo":"empleado.directorio.actualizado","orden":28,"enMs":1793702849535},
+      {"tipo":"empleado.directorio.actualizado","orden":29,"enMs":1793702849761},
+      {"tipo":"vision.ocupacion.actualizada","orden":30,"enMs":1793702850556},
+      {"tipo":"empleado.directorio.actualizado","orden":31,"enMs":1793702852582},
+      {"tipo":"vision.ocupacion.actualizada","orden":32,"enMs":1793702852990},
+      {"tipo":"empleado.directorio.actualizado","orden":33,"enMs":1793702855401},
+      {"tipo":"vision.ocupacion.actualizada","orden":34,"enMs":1793702855424},
+      {"tipo":"empleado.heartbeat","orden":null,"enMs":1793702859571},
+      {"tipo":"empleado.heartbeat","orden":null,"enMs":1793702860587}
+    ],
+    "latenciasComparativasRegistradas": false
+  }
+}

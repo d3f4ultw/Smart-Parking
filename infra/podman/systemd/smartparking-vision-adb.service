@@ -1,0 +1,19 @@
+[Unit]
+Description=Supervisor del forward USB de DroidCam para Vision
+
+[Service]
+Type=simple
+UMask=0077
+Environment=VISION_ADB_BIN=/mnt/new-volume/SmartParking/var/vision/tools/droidcam-adb-37.0.0p1-1/adb
+Environment=VISION_ADB_DEVICE_FILE=/mnt/new-volume/SmartParking/var/vision/config/adb-device-id.txt
+Environment=VISION_ADB_FORWARD_STATE=/mnt/new-volume/SmartParking/var/vision/cache/droidcam-usb-forward.json
+Environment=VISION_ADB_SERVER_PORT=5037
+Environment=VISION_ADB_LOCAL_PORT=14747
+Environment=VISION_ADB_REMOTE_PORT=4747
+ExecStart=/usr/bin/python3 /mnt/new-volume/SmartParking/infra/vision/supervisar_droidcam_usb.py
+Restart=always
+RestartSec=30s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=default.target
